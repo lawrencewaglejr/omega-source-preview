@@ -32,3 +32,5 @@ This release repository starts with fresh history. Private deployment notes,
 collected logs, reports, keys, passwords, and real household identifiers are not
 part of the distribution. Configure credentials and device labels locally.
 Example credentials in tests are deliberately fictional and must not be used.
+
+The image builder verifies this sanitized baseline and its approved README update.
