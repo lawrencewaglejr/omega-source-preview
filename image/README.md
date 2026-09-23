@@ -122,10 +122,10 @@ python3 -B tests/image/test-dashboard-setup.py
 
 ## Trust and source policy
 
-Commit `bd67750e97776c69379eee0d454fbe92ce605f98` is the protected-content
+Commit `4eeafcf1caffc4223055e32b33bc83067d72e20e` is the protected-content
 anchor. A build source must be a clean descendant and preserve every anchored
 Git blob, type, and mode. The only approved change to anchored content is the
-README attribution commit `809c53a48619820ff75a173c6ec2eca273b5c99b`,
+README release-policy commit `5179f3595f0b9e1c61417ee76d660fb05c7f102b`,
 whose parent, changed path, and resulting blob are verified exactly.
 
 Lock files use strict, versioned schemas (the AI inventory uses JSON). Verification rejects blank
