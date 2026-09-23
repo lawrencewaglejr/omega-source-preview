@@ -1,0 +1,18 @@
+OMEGA_PHASE=unprovisioned
+
+This master image contains no site identity or credentials. Phase 5 must
+create pihole.env and evebox.env, enroll Wazuh and Tailscale, set the Suricata
+capture interface and HOME_NET, configure networking, and enable services.
+
+Dashboard and local AI files are included but disabled. Before activation,
+Phase 5 must provide read access to the container Pi-hole database and sensor
+logs and connect a supported Wazuh manager feed. Copy dashboard-setup.json.example
+to a root-owned mode-0600 private configuration, review it for this device, and
+use /usr/libexec/omega/configure-dashboard --check, then --apply, with --config
+pointing to that file. The helper creates a unique dashboard password,
+dashboard.env, and dashboard.ready; services remain stopped. Enable them only
+after owner access is configured, then verify collection and AI. The master
+image must never include this marker, an active dashboard.env, passwords,
+network histories, device labels, or a customer's manager connection settings.
+The dashboard binds only to loopback; customer browser access is a separate
+provisioning responsibility. Setup preferences do not enforce parental controls.

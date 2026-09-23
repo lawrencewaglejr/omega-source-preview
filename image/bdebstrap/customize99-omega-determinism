@@ -1,0 +1,9 @@
+#!/bin/bash
+set -euo pipefail
+
+cat > "${IGconf_image_outputdir}/img_uuids" <<'EOF'
+BOOT_LABEL=BD67750E
+BOOT_UUID=BD67-750E
+ROOT_UUID=bd67750e-9777-5c69-b79e-ee0d454fbe92
+CRYPT_UUID=235361a0-4ff1-5321-94d5-825290ee0ee2
+EOF

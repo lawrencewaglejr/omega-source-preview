@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Set up your OMEGA</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to setup</a>
+<div class="layout">
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="OMEGA setup"><span>Ω</span> OMEGA</a>
+    <div class="sidebar-intro"><span class="eyebrow">WELCOME HOME</span><h2>Your network.<br>Your control.</h2><p>A few clear steps to connect your appliance and see what it can observe.</p></div>
+    <nav aria-label="Setup progress"><ol class="steps">
+      <li><button data-step-link="0" aria-label="Step 1: Pair this browser" aria-current="step"><span class="step-number">01</span><span>Pair this browser<small>Connect securely to setup</small></span></button></li>
+      <li><button data-step-link="1" aria-label="Step 2: Connect your sources" disabled><span class="step-number">02</span><span>Connect your sources<small>Network, endpoints, and DNS</small></span></button></li>
+      <li><button data-step-link="2" aria-label="Step 3: Make it yours" disabled><span class="step-number">03</span><span>Make it yours<small>Password and preferences</small></span></button></li>
+      <li><button data-step-link="3" aria-label="Step 4: Review your setup" disabled><span class="step-number">04</span><span>Review your setup<small>Check before applying</small></span></button></li>
+      <li><button data-step-link="4" aria-label="Step 5: Activate and verify" disabled><span class="step-number">05</span><span>Activate and verify<small>See what is working</small></span></button></li>
+    </ol></nav>
+    <div class="privacy-note"><span aria-hidden="true">◇</span><strong>Built around your privacy</strong><p>Setup and AI run on your appliance.<br>Your evidence stays local.</p></div>
+  </aside>
+  <main id="main">
+    <header><span>APPLIANCE SETUP</span><span id="connection-badge" class="badge">Connecting</span></header>
+    <div class="content">
+      <div id="demo-notice" class="notice hidden" role="status"><strong>Preview — no appliance changes</strong><br>Connections, checks, and AI results on this page are simulated. Preview pairing code: <code>OMEGA-PREVIEW</code>.</div>
+      <div id="global-error" class="notice error hidden" role="alert"></div>
+      <div id="activity" class="notice hidden" role="status" aria-live="polite"></div>
+
+      <section data-step="0">
+        <div class="page-heading"><span class="eyebrow">01 / YOUR PRIVATE CONNECTION</span><h1 tabindex="-1">Welcome to OMEGA.</h1><p>Let’s bring your network’s security into focus.</p></div>
+        <div class="pair-layout"><form id="pair-form" class="panel padded">
+          <div class="panel-icon" aria-hidden="true">Ω</div><h2>Pair this browser</h2><p>Enter the one-time code shown by the setup command in your appliance terminal.</p>
+          <label for="pair-code">Setup code</label><input id="pair-code" autocomplete="one-time-code" autocapitalize="none" spellcheck="false" required maxlength="256" placeholder="Enter your setup code">
+          <button class="primary full" type="submit">Pair and continue <span aria-hidden="true">→</span></button>
+          <p class="footnote">Keep your SSH tunnel open while you finish setup. The code gives this browser access to appliance settings.</p>
+        </form><div class="welcome-note"><span class="eyebrow">BEFORE YOU BEGIN</span><h2>A connected appliance.<br>A clearer picture.</h2><p>You will need owner SSH access, installed sensors, and your Wazuh manager’s connection details.</p><div class="source-pill"><span>⌁</span><div><strong>Suricata</strong><small>Network observations</small></div></div><div class="source-pill"><span>▣</span><div><strong>Wazuh</strong><small>Endpoint events from your manager</small></div></div><div class="source-pill"><span>◎</span><div><strong>Pi-hole</strong><small>DNS observations</small></div></div><p class="footnote">This guide connects existing services. Network provisioning, sensor installation, and owner SSH access must already be complete.</p></div></div>
+      </section>
+
+      <section data-step="1" class="hidden">
+        <div class="page-heading"><span class="eyebrow">02 / CONNECTED EVIDENCE</span><h1 tabindex="-1">Three sources. One picture.</h1><p>Connect the evidence your appliance will collect.</p></div>
+        <div class="panel padded prerequisites"><h2>Start with your network</h2><p>Suricata needs access to the traffic you intend to observe. Pi-hole only sees DNS requests sent through it. Your Wazuh agents must report to an available manager with JSON alerts and archives enabled.</p><label class="check-label"><input id="prerequisites" type="checkbox"><span>I have provisioned owner SSH access, the appliance network, and these sensor services.</span></label></div>
+        <form id="sources-form">
+          <fieldset class="panel padded"><legend>Where is your Wazuh manager?</legend><p>A separate manager remains responsible for Wazuh agents and event collection.</p>
+            <div class="source-options"><label class="radio-card"><input type="radio" name="manager-mode" value="remote" checked><span><strong>Another computer</strong><small>OMEGA pulls logs directly over SSH</small></span></label><label class="radio-card"><input type="radio" name="manager-mode" value="local"><span><strong>On this appliance</strong><small>Use existing local manager logs</small></span></label><label class="radio-card"><input type="radio" name="manager-mode" value="mirror"><span><strong>Existing log mirror</strong><small>Keep an already managed transfer</small></span></label></div>
+            <div id="manager-remote">
+              <div class="inline-note">The manager must stay available. This connection removes the laptop relay, but does not move your manager or agents onto OMEGA.</div>
+              <div class="manager-instructions"><span class="eyebrow">READ-ONLY ACCESS</span><h3>Give this appliance its own connection</h3><ol><li>Create the appliance’s SSH identity, then copy its public key.</li><li>On the manager, install a dedicated reader account restricted to exporting Wazuh JSON logs. Give it read access to alerts and archives; do not grant shell or administrator access.</li><li>Obtain the manager’s SSH host public key through its console or another trusted channel, then paste it below. Confirm it belongs to your manager before connecting.</li></ol><button id="create-identity" class="secondary" type="button">Create appliance identity</button><div id="identity-output" class="hidden"><label for="public-key">Appliance public key</label><textarea id="public-key" readonly rows="3" spellcheck="false"></textarea><div class="key-actions"><button id="copy-key" class="text-button" type="button">Copy public key</button><span id="copy-status" role="status"></span></div><p id="identity-fingerprint" class="footnote"></p></div><details><summary>Manager administrator instructions</summary><p>Follow the OMEGA manager setup guide to create a dedicated restricted reader account, install this appliance’s public key, and grant access to JSON alerts and archives. These changes happen on the manager and require its administrator.</p><a class="secondary" href="/api/manager/guide" download>Download manager setup instructions</a><p class="footnote">The guide uses tools already installed on your manager. OMEGA does not apply these changes remotely.</p><p>SSH host public keys look like <code>ssh-ed25519 AAAA…</code>. A fingerprint alone is not the public key. Do not accept a key learned from an unverified connection.</p></details></div>
+              <div class="form-grid"><div><label for="manager-host">Manager address</label><input id="manager-host" autocomplete="off" placeholder="Manager IP address or hostname" maxlength="253"></div><div><label for="manager-user">Reader account</label><input id="manager-user" autocomplete="off" placeholder="Dedicated manager reader" maxlength="64"></div><div><label for="manager-port">SSH port</label><input id="manager-port" type="number" min="1" max="65535" value="22" inputmode="numeric"></div></div>
+              <label for="host-key">Verified manager SSH host public key</label><textarea id="host-key" rows="3" spellcheck="false" autocomplete="off" placeholder="ssh-ed25519 AAAA…" maxlength="16384"></textarea><div class="manager-actions"><button id="connect-manager" class="secondary" type="button">Save and test manager connection</button><button id="recheck-manager" class="text-button" type="button" disabled>Recheck manager connection</button></div>
+              <p id="manager-status" role="status">Manager connection has not been checked.</p>
+            </div>
+            <div id="manager-local" class="inline-note hidden">Use the existing Wazuh manager on this appliance. Its JSON logs must be readable by OMEGA. A remote sync heartbeat is not needed for local files.</div>
+            <div id="manager-mirror" class="inline-note hidden">Use your existing mirror and its heartbeat file. Its transfer service must remain available independently of this browser. An existing laptop relay still depends on that laptop.</div>
+          </fieldset>
+          <details class="panel padded source-paths"><summary>Advanced source paths</summary><p>These paths refer to files on your appliance. The review check will inspect their availability.</p><label for="suricata-path">Suricata events</label><input id="suricata-path" spellcheck="false"><label for="pihole-path">Pi-hole query database</label><input id="pihole-path" spellcheck="false"><label for="wazuh-alerts-path">Wazuh JSON alerts</label><input id="wazuh-alerts-path" spellcheck="false"><label for="wazuh-archives-path">Wazuh JSON archives</label><input id="wazuh-archives-path" spellcheck="false"><label for="wazuh-sync-path">Wazuh sync heartbeat</label><input id="wazuh-sync-path" spellcheck="false"><small>Leave blank only when reading the local manager directly.</small></details>
+          <div class="actions"><span class="footnote">Availability will be checked before setup is applied.</span><button class="primary" type="submit">Continue <span aria-hidden="true">→</span></button></div>
+        </form>
+      </section>
+
+      <section data-step="2" class="hidden">
+        <div class="page-heading"><span class="eyebrow">03 / YOUR APPLIANCE, YOUR PREFERENCES</span><h1 tabindex="-1">Make it yours.</h1><p>Choose how you sign in and how much evidence to retain.</p></div>
+        <form id="preferences-form"><div class="panel padded"><h2>Secure your dashboard</h2><p>Create a unique password of at least 16 characters. Keep it in your password manager.</p><div class="form-grid two"><div><label for="owner-password">Dashboard password</label><input id="owner-password" type="password" autocomplete="new-password" minlength="16" maxlength="2048" required></div><div><label for="owner-confirm">Confirm password</label><input id="owner-confirm" type="password" autocomplete="new-password" minlength="16" maxlength="2048" required></div></div><p class="footnote">This password protects the dashboard. Your existing appliance SSH credentials stay separate.</p></div>
+          <div class="panel padded"><h2>Evidence retention</h2><p>Keep collected events up to these limits. Retention does not create past history. Available storage may limit how much you can keep.</p><div class="form-grid two"><div><label for="retention-days">Maximum age, in days</label><input id="retention-days" type="number" min="1" max="3650" required inputmode="numeric"><small>1 to 3,650 days</small></div><div><label for="max-events">Maximum retained events</label><input id="max-events" type="number" min="1" max="50000000" required inputmode="numeric"><small>1 to 50,000,000 events</small></div></div></div>
+          <div class="panel padded"><div class="heading-row"><h2>Your local AI</h2><span class="badge">Runs on OMEGA</span></div><p>The image includes a local model for explanations and reports. Verification will ask it to produce an answer on your appliance.</p><label for="ai-model">Installed model</label><input id="ai-model" required maxlength="128" spellcheck="false"><details><summary>Advanced AI setting</summary><label for="ai-threads">CPU threads</label><input id="ai-threads" type="number" min="1" max="8" required inputmode="numeric"><small>1 to 8 threads. The supplied default leaves capacity for your sensors.</small></details></div>
+          <div class="inline-note">Optional family filtering and message review are not activated by this setup. A running sensor service does not confirm that protection rules are being enforced.</div><div class="actions"><button class="secondary" type="button" data-back="1">Back</button><button class="primary" type="submit">Review setup <span aria-hidden="true">→</span></button></div>
+        </form>
+      </section>
+
+      <section data-step="3" class="hidden">
+        <div class="page-heading"><span class="eyebrow">04 / A MOMENT TO CHECK</span><h1 tabindex="-1">Ready when you are.</h1><p>Review your choices, then check the appliance before applying them.</p></div>
+        <div class="panel padded"><div class="heading-row"><h2>Your setup</h2><button class="text-button" type="button" data-back="2">Edit preferences</button></div><dl id="review-summary" class="review-list"></dl><details><summary>Review source paths</summary><dl id="review-paths" class="review-list paths"></dl></details></div>
+        <div class="panel padded"><div class="heading-row"><div><h2>Appliance readiness</h2><p>A readiness check inspects settings and existing resources. Fresh collection and AI inference are verified after activation.</p></div><button id="check-setup" type="button" class="secondary">Check appliance</button></div><div id="check-results" class="check-results" aria-live="polite"><p>Run the check to continue.</p></div></div>
+        <div class="inline-note">Applying setup writes dashboard settings and its password. Activation is a separate step. Collection begins from a new baseline; earlier log history is not imported.</div>
+        <div class="actions"><button class="secondary" type="button" data-back="2">Back</button><button id="apply-setup" class="primary" type="button" disabled>Apply setup <span aria-hidden="true">→</span></button></div>
+      </section>
+
+      <section data-step="4" class="hidden">
+        <div class="page-heading"><span class="eyebrow">05 / THE EVIDENCE WILL TELL</span><h1 tabindex="-1">Bring OMEGA online.</h1><p>Activate collection, then verify fresh events and a local AI response.</p></div>
+        <div class="panel padded activation"><div class="panel-icon" aria-hidden="true">◇</div><div><h2 id="activation-title">Settings saved. Ready to activate.</h2><p id="activation-detail">Activation starts the dashboard and creates a collection baseline. It does not import earlier events.</p><button id="activate" class="primary" type="button">Activate OMEGA <span aria-hidden="true">→</span></button></div></div>
+        <div class="panel padded"><div class="heading-row"><div><h2>Verify what is working</h2><p>Fresh records confirm evidence has reached OMEGA. The AI check can take up to 16 minutes on the appliance.</p></div><button id="verify" class="secondary" type="button" disabled>Verify live sources and AI</button></div><p class="footnote">After activation, generate ordinary network and DNS activity and an event on a Wazuh-connected endpoint. Idle sources can remain unverified until they receive new records.</p><div id="verification-results" class="verification-results" aria-live="polite"></div><p id="verification-summary" role="status">Waiting for activation.</p></div>
+        <div class="panel padded dashboard-access"><div><span class="eyebrow">YOUR NEXT DESTINATION</span><h2>The security dashboard</h2><p>Open a local SSH tunnel to the dashboard on port 8089 using your existing owner account. Keep it open while using the dashboard.</p><p class="footnote">Example: <code>ssh -L 8089:127.0.0.1:8089 &lt;owner&gt;@&lt;appliance&gt;</code></p></div><a id="dashboard-link" class="secondary" href="http://127.0.0.1:8089/" target="_blank" rel="noopener noreferrer">Open dashboard <span aria-hidden="true">↗</span></a></div>
+      </section>
+      <footer><span>Ω OMEGA</span><span>Your network. Your control.</span></footer>
+    </div>
+  </main>
+</div>
+<noscript><div class="notice error">JavaScript is required for appliance setup. Enable it in this browser and reload.</div></noscript>
+</body>
+</html>

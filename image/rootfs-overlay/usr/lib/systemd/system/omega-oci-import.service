@@ -1,0 +1,10 @@
+[Unit]
+Description=Import pinned OMEGA container images
+Requires=docker.service
+After=docker.service
+ConditionPathExists=/usr/share/omega/oci/omega-services.tar
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/omega/import-images
+RemainAfterExit=yes

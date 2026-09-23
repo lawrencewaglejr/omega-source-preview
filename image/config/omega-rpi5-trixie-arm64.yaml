@@ -1,0 +1,40 @@
+env:
+  ARCH: arm64
+  SOURCE_DATE_EPOCH: 1787801458
+
+sys:
+  workroot: /build/omega
+
+device:
+  layer: rpi5
+  storage_type: sd
+  hostname: omega
+  user1sudo: passwd
+
+image:
+  layer: image-rpios
+  boot_part_size: 512M
+  root_part_size: 31G
+  name: omega-rpi5-trixie-arm64
+  rootfs_type: ext4
+  pmap: clear
+  disksig: "0xbd67750e"
+
+deploy:
+  compression: none
+
+sbom:
+  enable: n
+
+locale:
+  default: C.UTF-8
+  timezone: UTC
+
+artefact:
+  version: omega-v1
+
+layer:
+  base: omega-trixie-minbase
+
+fs:
+  ext4_mkfs_args: "-F -b 16384 -E hash_seed=bd67750e-9777-5c69-b79e-ee0d454fbe92"

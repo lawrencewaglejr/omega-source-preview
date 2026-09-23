@@ -1,0 +1,17 @@
+[Unit]
+Description=OMEGA Pi-hole container
+Requires=docker.service omega-oci-import.service
+After=docker.service omega-oci-import.service
+ConditionPathExists=/etc/omega/pihole.env
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f omega-pihole
+ExecStart=/usr/bin/docker run --rm --pull=never --name omega-pihole --network host --env-file /etc/omega/pihole.env --volume /var/lib/omega/pihole/etc-pihole:/etc/pihole --volume /var/lib/omega/pihole/etc-dnsmasq.d:/etc/dnsmasq.d sha256:8f360b798da52d46cf9061282084c4e35a1c73d9678b8a888b55c193051a752d
+ExecStop=/usr/bin/docker stop -t 30 omega-pihole
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

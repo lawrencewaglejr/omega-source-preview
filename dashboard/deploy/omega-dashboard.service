@@ -1,0 +1,23 @@
+[Unit]
+Description=OMEGA browser dashboard
+After=network.target omega-ai.service
+
+[Service]
+User=omega-dashboard
+Group=omega-dashboard
+ExecStart=/usr/bin/python3 -B /opt/omega-dashboard/server.py --port 8089 --password-file /var/lib/omega-dashboard/password --ai-model qwen3:1.7b
+StateDirectory=omega-dashboard
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+MemoryMax=256M
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

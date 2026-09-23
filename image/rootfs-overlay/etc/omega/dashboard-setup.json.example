@@ -1,0 +1,11 @@
+{
+  "OMEGA_AI_MODEL": "qwen3:1.7b",
+  "OMEGA_AI_THREADS": 2,
+  "OMEGA_SURICATA_EVE": "/var/log/suricata/eve.json",
+  "OMEGA_PIHOLE_DATABASE": "/var/lib/omega/pihole/etc-pihole/pihole-FTL.db",
+  "OMEGA_WAZUH_ALERTS": "/var/lib/omega-wazuh-import/alerts/alerts.json",
+  "OMEGA_WAZUH_ARCHIVES": "/var/lib/omega-wazuh-import/archives/archives.json",
+  "OMEGA_WAZUH_SYNC_STATUS": "/var/lib/omega-wazuh-import/sync-status.json",
+  "OMEGA_RETENTION_DAYS": 3650,
+  "OMEGA_MAX_EVENTS": 50000000
+}

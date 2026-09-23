@@ -1,0 +1,47 @@
+[Unit]
+Description=OMEGA private dashboard and telemetry collection
+After=network.target omega-ai.service pihole-FTL.service suricata.service
+Wants=omega-ai.service
+ConditionPathExists=/etc/omega/dashboard.ready
+ConditionPathExists=/etc/omega/dashboard.env
+ConditionPathExists=/var/lib/omega-dashboard/password
+
+[Service]
+User=omega-dashboard
+Group=omega-dashboard
+SupplementaryGroups=omega-telemetry
+EnvironmentFile=/etc/omega/dashboard.env
+ExecStart=/usr/bin/python3 -B /opt/omega-dashboard/server.py \
+    --port 8089 \
+    --password-file /var/lib/omega-dashboard/password \
+    --ai-model ${OMEGA_AI_MODEL} \
+    --ai-threads ${OMEGA_AI_THREADS} \
+    --eve ${OMEGA_SURICATA_EVE} \
+    --pihole-database ${OMEGA_PIHOLE_DATABASE} \
+    --wazuh-alerts ${OMEGA_WAZUH_ALERTS} \
+    --wazuh-archives ${OMEGA_WAZUH_ARCHIVES} \
+    --wazuh-sync-status ${OMEGA_WAZUH_SYNC_STATUS} \
+    --device-state /var/lib/omega-dashboard/devices.json \
+    --protection-state /var/lib/omega-dashboard/protection.json \
+    --telemetry-state /var/lib/omega-dashboard/live/telemetry.sqlite3 \
+    --from-now \
+    --retention-days ${OMEGA_RETENTION_DAYS} \
+    --max-events ${OMEGA_MAX_EVENTS}
+StateDirectory=omega-dashboard omega-dashboard/live
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+Nice=10
+CPUQuota=150%
+MemoryMax=768M
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,566 @@
+#!/usr/bin/python3
+"""Offline operator provisioning for an otherwise configured, unused appliance."""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import getpass
+import grp
+import hashlib
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import shutil
+import signal
+import stat
+import subprocess
+import sys
+
+
+KEYS = {
+    "OMEGA_AI_MODEL", "OMEGA_AI_THREADS", "OMEGA_SURICATA_EVE",
+    "OMEGA_PIHOLE_DATABASE", "OMEGA_WAZUH_ALERTS", "OMEGA_WAZUH_ARCHIVES",
+    "OMEGA_WAZUH_SYNC_STATUS", "OMEGA_RETENTION_DAYS", "OMEGA_MAX_EVENTS",
+}
+APP_FILES = (
+    "ai_status.py", "correlation.py", "devices.py", "protection.py",
+    "report_jobs.py", "server.py", "telemetry_store.py", "static/app.js",
+    "static/index.html", "static/style.css",
+)
+STATE = "/var/lib/omega-dashboard"
+ENV = "/etc/omega/dashboard.env"
+READY = "/etc/omega/dashboard.ready"
+PASSWORD = STATE + "/password"
+MODEL_ROOT = "/var/lib/omega-ai/models"
+RUNTIME_ROOT = "/opt/omega-ai/ollama-0.33.3"
+RUNTIME = RUNTIME_ROOT + "/bin/ollama"
+
+
+class SetupError(ValueError):
+    pass
+
+
+def require(condition, message):
+    if not condition:
+        raise SetupError(message)
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        require(key not in result, "JSON contains a duplicate key.")
+        result[key] = value
+    return result
+
+
+def parse_json(data):
+    try:
+        if isinstance(data, bytes):
+            data = data.decode("utf-8")
+        return json.loads(data, object_pairs_hook=unique_object)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise SetupError("Expected valid UTF-8 JSON.") from exc
+
+
+def safe_absolute(value):
+    require(isinstance(value, str) and len(value) <= 4096
+            and re.fullmatch(r"/[A-Za-z0-9_./-]+", value),
+            "Source paths must be literal absolute paths without whitespace or substitutions.")
+    require(all(part not in ("", ".", "..") for part in value.split("/")[1:]),
+            "Source paths must not contain empty, dot, or parent components.")
+    require(not any(value == prefix or value.startswith(prefix + "/")
+                    for prefix in ("/proc", "/sys", "/dev", STATE,
+                                   "/home", "/root", "/run/user", "/tmp", "/var/tmp")),
+            "Source path is in dashboard state or a filesystem hidden or prohibited by the service sandbox.")
+    return value
+
+
+def validate_config(config):
+    require(isinstance(config, dict) and set(config) == KEYS,
+            "Configuration must contain exactly the documented nine OMEGA keys.")
+    require(isinstance(config["OMEGA_AI_MODEL"], str)
+            and re.fullmatch(r"[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*", config["OMEGA_AI_MODEL"]),
+            "Model must be a literal library model name and tag.")
+    for key, maximum in (("OMEGA_AI_THREADS", 8), ("OMEGA_RETENTION_DAYS", 3650),
+                         ("OMEGA_MAX_EVENTS", 50000000)):
+        require(type(config[key]) is int and 1 <= config[key] <= maximum,
+                key + " is outside its supported integer range.")
+    for key in KEYS - {"OMEGA_AI_MODEL", "OMEGA_AI_THREADS", "OMEGA_RETENTION_DAYS", "OMEGA_MAX_EVENTS"}:
+        if key == "OMEGA_WAZUH_SYNC_STATUS" and config[key] == "":
+            continue
+        safe_absolute(config[key])
+    sources = [config[key] for key in ("OMEGA_SURICATA_EVE", "OMEGA_PIHOLE_DATABASE",
+                                       "OMEGA_WAZUH_ALERTS", "OMEGA_WAZUH_ARCHIVES")]
+    require(len(set(sources)) == len(sources), "The four sources must have distinct paths.")
+    require(not config["OMEGA_WAZUH_SYNC_STATUS"] or config["OMEGA_WAZUH_SYNC_STATUS"] not in sources,
+            "The mirror heartbeat must be separate from source data.")
+    return dict(config)
+
+
+def open_directory(path, *, traversal_only=False):
+    """Open each component without following symlinks, including ancestors."""
+    path = Path(path)
+    require(path.is_absolute() and ".." not in path.parts, "Expected an absolute, normalized path.")
+    access = os.O_PATH if traversal_only else os.O_RDONLY
+    fd = os.open("/", access | os.O_DIRECTORY)
+    try:
+        for name in path.parts[1:]:
+            next_fd = os.open(name, access | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def open_regular(path):
+    # Readers need traversal, not permission to list private source directories.
+    parent = open_directory(Path(path).parent, traversal_only=True)
+    try:
+        fd = os.open(Path(path).name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent)
+    finally:
+        os.close(parent)
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode):
+        os.close(fd)
+        raise SetupError("Required input is not a regular file.")
+    return fd
+
+
+def read_small(path, limit=32768, private_owner=None):
+    fd = open_regular(path)
+    try:
+        info = os.fstat(fd)
+        if private_owner is not None:
+            require(info.st_uid == private_owner and stat.S_IMODE(info.st_mode) == 0o600
+                    and info.st_nlink == 1, "Private input must be singly linked, owner-only mode 0600.")
+        data = os.read(fd, limit + 1)
+        require(len(data) <= limit, "Input exceeds its size limit.")
+        return data
+    finally:
+        os.close(fd)
+
+
+def check_password(value):
+    require(isinstance(value, str) and 16 <= len(value) <= 1024 and value == value.strip()
+            and all(ord(char) >= 32 and ord(char) != 127 for char in value),
+            "Password needs 16–1024 characters, no control characters or surrounding whitespace.")
+    try:
+        value.encode("utf-8")
+    except UnicodeError as exc:
+        raise SetupError("Password must contain valid UTF-8 characters.") from exc
+    return value
+
+
+def output_identity(info, directory):
+    identity = (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid)
+    if not directory:
+        identity += (info.st_size, info.st_nlink, info.st_mtime_ns, info.st_ctime_ns)
+    return identity
+
+
+def lookup_accounts():
+    result = {}
+    telemetry = grp.getgrnam("omega-telemetry").gr_gid
+    for name in ("omega-dashboard", "omega-ai"):
+        account = pwd.getpwnam(name)
+        groups = os.getgrouplist(name, account.pw_gid)
+        require(account.pw_uid != 0 and account.pw_shell in ("/usr/sbin/nologin", "/sbin/nologin", "/bin/false"),
+                "OMEGA requires non-root, non-login service accounts.")
+        result[name] = (account.pw_uid, account.pw_gid, groups)
+    require(telemetry in result["omega-dashboard"][2], "Dashboard account is not in omega-telemetry.")
+    return result
+
+
+def probe_as(identity, paths):
+    """Check real kernel/ACL access as the service account, without source writes."""
+    reader, writer = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(reader)
+        try:
+            signal.alarm(30)
+            os.setgroups(identity[2])
+            os.setgid(identity[1])
+            os.setuid(identity[0])
+            for entry in paths:
+                path, read_only = entry[:2]
+                fd = open_regular(path)
+                os.read(fd, 1)
+                os.close(fd)
+                if len(entry) == 3 and entry[2]:
+                    require(os.access(path, os.X_OK), "Service account cannot execute a required runtime file.")
+                if read_only:
+                    require(not os.access(path, os.W_OK) and not os.access(Path(path).parent, os.W_OK),
+                            "Dashboard must not have write access to source files or their directories.")
+            os.write(writer, b"ok")
+        except BaseException:
+            pass  # Never send source contents or private exception details to logs.
+        finally:
+            os.close(writer)
+            os._exit(0)
+    os.close(writer)
+    try:
+        result = os.read(reader, 16)
+    finally:
+        os.close(reader)
+        _, status = os.waitpid(pid, 0)
+    require(result == b"ok" and os.waitstatus_to_exitcode(status) == 0,
+            "Service-account access failed, or a dashboard source is writable. Check ownership, traversal, execution and ACLs.")
+
+
+class Setup:
+    """A non-/ root and injected probes are library-only test fixtures, never CLI options."""
+    def __init__(self, root=Path("/"), *, accounts=None, probe=None, checkpoint=None):
+        self.root = Path(root).absolute()
+        require(self.root == self.root.resolve(), "Setup root must not contain symlinks.")
+        if self.root == Path("/"):
+            require(os.geteuid() == 0, "Run this helper as root on the provisioned appliance.")
+            require(accounts is None and probe is None and checkpoint is None,
+                    "Test dependencies cannot be injected for the real filesystem.")
+        self.owner = 0 if self.root == Path("/") else os.geteuid()
+        self.owner_group = 0 if self.root == Path("/") else os.getegid()
+        self.accounts = accounts if accounts is not None else lookup_accounts()
+        self.probe = probe if probe is not None else probe_as
+        self.checkpoint = checkpoint or (lambda _: None)
+
+    def path(self, absolute):
+        return self.root / absolute.lstrip("/")
+
+    def secure_packaged_file(self, absolute, executable=False):
+        path = self.path(absolute)
+        fd = open_regular(path)
+        try:
+            info = os.fstat(fd)
+            require(info.st_uid == self.owner and not info.st_mode & 0o022,
+                    "Packaged application or configuration is not protected from modification.")
+            require(not executable or bool(info.st_mode & 0o111), "Local AI runtime is not executable.")
+        finally:
+            os.close(fd)
+        return path
+
+    def unused(self):
+        for absolute in (ENV, READY, PASSWORD):
+            require(not os.path.lexists(self.path(absolute)), "Dashboard is already configured; nothing will be overwritten.")
+        for absolute in ("/etc/omega", "/var/lib"):
+            fd = open_directory(self.path(absolute))
+            info = os.fstat(fd)
+            os.close(fd)
+            require(info.st_uid == self.owner and not info.st_mode & 0o022,
+                    "Provisioning parent directories must be root-owned and not group/world writable.")
+        for absolute, allowed in ((STATE, {"live"}), (STATE + "/live", set())):
+            path = self.path(absolute)
+            if os.path.lexists(path):
+                fd = open_directory(path)
+                try:
+                    info = os.fstat(fd)
+                    require(info.st_uid == self.accounts["omega-dashboard"][0]
+                            and info.st_gid == self.accounts["omega-dashboard"][1]
+                            and stat.S_IMODE(info.st_mode) == 0o700,
+                            "Existing dashboard directories must have private service-account ownership.")
+                    require(set(os.listdir(fd)) <= allowed,
+                            "Existing dashboard state or evidence was found; nothing will be overwritten.")
+                finally:
+                    os.close(fd)
+
+    def verify_payload_file(self, absolute, spec, *, runtime=False):
+        require(type(spec.get("size")) is int and 0 < spec["size"] <= 16 * 1024**3
+                and isinstance(spec.get("sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", spec["sha256"]),
+                "Packaged AI file size or digest is invalid.")
+        fd = open_regular(self.path(absolute))
+        try:
+            before = os.fstat(fd)
+            require(before.st_size == spec["size"] and not before.st_mode & 0o022
+                    and before.st_uid in ({self.owner} if runtime else {self.owner, self.accounts["omega-ai"][0]})
+                    and before.st_nlink == 1,
+                    "AI file size or permissions do not match the packaged payload.")
+            if runtime:
+                require(stat.S_IMODE(before.st_mode) == int(spec["mode"], 8),
+                        "AI runtime permissions do not match its packaged mode.")
+            digest = hashlib.sha256()
+            while chunk := os.read(fd, 1024 * 1024):
+                digest.update(chunk)
+            require(digest.hexdigest() == spec["sha256"], "Offline AI integrity check failed.")
+            after = os.fstat(fd)
+            require((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                    == (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns),
+                    "An AI file changed during its integrity check.")
+        finally:
+            os.close(fd)
+
+    def runtime_files(self, runtime):
+        require(isinstance(runtime, dict) and runtime.get("version") == "0.33.3"
+                and isinstance(runtime.get("members"), list) and 1 <= len(runtime["members"]) <= 100,
+                "Packaged AI runtime metadata is invalid.")
+        members = {}
+        for member in runtime["members"]:
+            require(isinstance(member, dict) and isinstance(member.get("path"), str)
+                    and re.fullmatch(r"bin/ollama|lib/ollama/[A-Za-z0-9_.-]+", member["path"])
+                    and member["path"] not in members and member.get("type") in ("file", "symlink"),
+                    "Packaged runtime member is invalid or duplicated.")
+            if member["type"] == "file":
+                require(member.get("mode") in ("0644", "0755"), "Packaged runtime mode is invalid.")
+            else:
+                target = member.get("target")
+                require(isinstance(target, str) and re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", target),
+                        "Packaged runtime symlink target is invalid.")
+            members[member["path"]] = member
+        require(members.get("bin/ollama", {}).get("mode") == "0755"
+                and members["bin/ollama"]["type"] == "file", "Packaged runtime binary is unspecified.")
+        probes = []
+        for name, member in members.items():
+            path = self.path(RUNTIME_ROOT + "/" + name)
+            if member["type"] == "file":
+                self.verify_payload_file(RUNTIME_ROOT + "/" + name, member, runtime=True)
+                probes.append((path, False, member["mode"] == "0755"))
+                continue
+            seen = set()
+            current = member
+            while current["type"] == "symlink":
+                require(current["path"] not in seen, "Packaged runtime symlink cycle was found.")
+                seen.add(current["path"])
+                target = str(Path(current["path"]).parent / current["target"])
+                require(target in members, "Packaged runtime symlink target is missing.")
+                current = members[target]
+            parent = open_directory(path.parent, traversal_only=True)
+            try:
+                info = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+                require(stat.S_ISLNK(info.st_mode) and info.st_uid == self.owner
+                        and os.readlink(path.name, dir_fd=parent) == member["target"],
+                        "AI runtime symlink does not match the packaged payload.")
+            finally:
+                os.close(parent)
+        return probes
+
+    def model_files(self, config):
+        lock_path = self.secure_packaged_file("/usr/share/omega/ai/manifest.json")
+        lock = parse_json(read_small(lock_path, 2 * 1024 * 1024))
+        require(isinstance(lock, dict) and lock.get("schema") == "omega-ai-payload-v1",
+                "Packaged AI manifest is missing or unsupported.")
+        runtime_probes = self.runtime_files(lock.get("runtime", {}))
+        model = lock.get("model", {})
+        require(isinstance(model, dict) and model.get("tag") == config["OMEGA_AI_MODEL"],
+                "Selected model does not match the verified packaged model.")
+        name, tag = config["OMEGA_AI_MODEL"].split(":")
+        expected_path = "manifests/registry.ollama.ai/library/" + name + "/" + tag
+        manifest = model.get("manifest", {})
+        require(isinstance(manifest, dict) and manifest.get("path") == expected_path,
+                "Packaged model manifest path is invalid.")
+        blobs = model.get("blobs")
+        require(isinstance(blobs, list) and 1 <= len(blobs) <= 32, "Packaged model blob list is invalid.")
+        specs = [(MODEL_ROOT + "/" + expected_path, manifest)]
+        for blob in blobs:
+            require(isinstance(blob, dict), "Packaged model blob is invalid.")
+            digest = blob.get("sha256")
+            require(isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest),
+                    "Packaged model digest is invalid.")
+            specs.append((MODEL_ROOT + "/blobs/sha256-" + digest, blob))
+        require(len({path for path, _ in specs}) == len(specs), "Packaged model has duplicate blobs.")
+        for absolute, spec in specs:
+            self.verify_payload_file(absolute, spec)
+        content = parse_json(read_small(self.path(specs[0][0]), 1024 * 1024))
+        require(isinstance(content, dict) and content.get("schemaVersion") == 2 and isinstance(content.get("layers"), list)
+                and isinstance(content.get("config"), dict), "Ollama model manifest is invalid.")
+        references = content["layers"] + [content["config"]]
+        actual = []
+        for reference in references:
+            require(isinstance(reference, dict) and isinstance(reference.get("digest"), str)
+                    and type(reference.get("size")) is int, "Ollama model reference is invalid.")
+            actual.append((reference.get("digest"), reference.get("size")))
+        expected = [("sha256:" + blob["sha256"], blob["size"]) for blob in blobs]
+        require(sorted(actual) == sorted(expected), "Ollama references do not match the packaged blob list.")
+        return [(self.path(path), False) for path, _ in specs] + runtime_probes
+
+    def sources(self, config):
+        paths = []
+        for key in ("OMEGA_SURICATA_EVE", "OMEGA_WAZUH_ALERTS", "OMEGA_WAZUH_ARCHIVES"):
+            path = self.path(config[key])
+            fd = open_regular(path)
+            try:
+                data = os.read(fd, 1024 * 1024 + 1)
+                if data:
+                    line = data.split(b"\n", 1)[0]
+                    require(len(line) <= 1024 * 1024 and isinstance(parse_json(line), dict),
+                            "A telemetry log does not begin with a supported JSON record.")
+            finally:
+                os.close(fd)
+            paths.append(path)
+        database = self.path(config["OMEGA_PIHOLE_DATABASE"])
+        fd = open_regular(database)
+        try:
+            header = os.read(fd, 100)
+            require(len(header) == 100 and header.startswith(b"SQLite format 3\x00"),
+                    "Pi-hole must initialize its SQLite database before dashboard setup.")
+        finally:
+            os.close(fd)
+        paths.append(database)
+        for suffix in ("-wal", "-shm"):
+            companion = Path(str(database) + suffix)
+            if os.path.lexists(companion) or header[18:20] == b"\x02\x02":
+                fd = open_regular(companion)
+                os.close(fd)
+                paths.append(companion)
+        if config["OMEGA_WAZUH_SYNC_STATUS"]:
+            heartbeat = self.path(config["OMEGA_WAZUH_SYNC_STATUS"])
+            status = parse_json(read_small(heartbeat))
+            require(isinstance(status, dict) and isinstance(status.get("sources"), dict),
+                    "Wazuh mirror heartbeat is malformed.")
+            require(all(isinstance(status["sources"].get(name), dict)
+                        and status["sources"][name].get("ok") is True for name in ("alerts", "archives")),
+                    "Wazuh mirror has not successfully copied both streams.")
+            try:
+                timestamp = dt.datetime.fromisoformat(status["checked_at"].replace("Z", "+00:00"))
+                age = (dt.datetime.now(dt.timezone.utc) - timestamp).total_seconds()
+            except (KeyError, TypeError, ValueError, AttributeError) as exc:
+                raise SetupError("Wazuh mirror heartbeat time is invalid.") from exc
+            require(-30 <= age <= 120, "Wazuh mirror heartbeat is stale or clock settings disagree.")
+            paths.append(heartbeat)
+        return paths
+
+    def check(self, config):
+        config = validate_config(config)
+        self.unused()
+        require(shutil.disk_usage(self.path("/var/lib")).free >= 2 * 1024**3,
+                "At least 2 GiB of free space is required before collection can start.")
+        if self.root == Path("/"):
+            for unit in ("omega-dashboard.service", "omega-ai.service"):
+                result = subprocess.run(["/usr/bin/systemctl", "show", "--property=ActiveState", "--value", unit],
+                                        capture_output=True, text=True, timeout=10, check=False)
+                require(result.returncode == 0 and result.stdout.strip() == "inactive",
+                        "Dashboard and AI services must be inactive before first configuration.")
+        for unit in ("omega-dashboard.service", "omega-ai.service"):
+            self.secure_packaged_file("/usr/lib/systemd/system/" + unit)
+        application = [self.secure_packaged_file("/opt/omega-dashboard/" + name) for name in APP_FILES]
+        ai_probes = self.model_files(config)
+        source_paths = self.sources(config)
+        self.probe(self.accounts["omega-dashboard"], [(path, True) for path in source_paths]
+                   + [(path, False) for path in application])
+        self.probe(self.accounts["omega-ai"], ai_probes)
+        return config
+
+    def apply(self, config, password):
+        password = check_password(password)
+        config = self.check(config)
+        self.unused()  # Recheck after potentially lengthy offline model verification.
+        created = []
+        try:
+            uid, gid, _ = self.accounts["omega-dashboard"]
+            for absolute in (STATE, STATE + "/live"):
+                path = self.path(absolute)
+                if not os.path.lexists(path):
+                    self.create(path, None, uid, gid, 0o700, created)
+            self.create(self.path(ENV), "".join(key + "=" + str(config[key]) + "\n" for key in sorted(KEYS)).encode(),
+                        self.owner, self.owner_group, 0o600, created)
+            self.create(self.path(PASSWORD), password.encode("utf-8"), uid, gid, 0o600, created)
+            self.checkpoint("before_marker")
+            for absolute, expected in ((STATE, {"live", "password"}), (STATE + "/live", set())):
+                fd = open_directory(self.path(absolute))
+                try:
+                    require(set(os.listdir(fd)) == expected, "Dashboard state changed during configuration.")
+                finally:
+                    os.close(fd)
+            for parent, name, identity, directory in created:
+                info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                require(output_identity(info, directory) == identity, "A setup output changed during configuration.")
+            self.create(self.path(READY), b"configured; acceptance checks pending\n", self.owner, self.owner_group, 0o600, created)
+            self.checkpoint("after_marker")
+        except BaseException:
+            for parent, name, identity, directory in reversed(created):
+                try:
+                    info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                    if output_identity(info, directory) == identity:
+                        (os.rmdir if directory else os.unlink)(name, dir_fd=parent)
+                        os.fsync(parent)
+                except OSError:
+                    pass  # Preserve replaced files and any newly nonempty directory.
+            raise
+        finally:
+            for parent, _, _, _ in created:
+                os.close(parent)
+
+    def create(self, path, content, uid, gid, mode, created):
+        parent = open_directory(path.parent)
+        fd = None
+        tracked = False
+        try:
+            if content is None:
+                os.mkdir(path.name, mode, dir_fd=parent)
+                fd = os.open(path.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+            else:
+                fd = os.open(path.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode, dir_fd=parent)
+            info = os.fstat(fd)
+            record = [parent, path.name, output_identity(info, content is None), content is None]
+            created.append(record)
+            tracked = True
+            try:
+                os.fchown(fd, uid, gid)
+                os.fchmod(fd, mode)
+                if content is not None:
+                    with os.fdopen(os.dup(fd), "wb") as output:
+                        output.write(content)
+                        output.flush()
+                os.fsync(fd)
+                os.fsync(parent)
+            finally:
+                # Keep partial outputs removable if one of our writes failed,
+                # but preserve later external edits, even on the same inode.
+                record[2] = output_identity(os.fstat(fd), content is None)
+            self.checkpoint(path.name)
+        finally:
+            if fd is not None:
+                os.close(fd)
+            if not tracked:
+                os.close(parent)
+
+
+class Options(argparse.ArgumentParser):
+    def error(self, message):
+        # Invalid arguments may themselves contain a mistakenly supplied secret.
+        self.exit(2, "Invalid setup options. Use --help for supported arguments.\n")
+
+
+def main(argv=None):
+    parser = Options(description=__doc__, allow_abbrev=False)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--check", action="store_true", help="Read-only prerequisite and integrity checks")
+    mode.add_argument("--apply", action="store_true", help="Create first-use configuration; never start services")
+    parser.add_argument("--config", type=Path, required=True, help="Root-owned mode-0600 JSON configuration")
+    parser.add_argument("--password-file", type=Path, help="For unattended --apply: separate root-owned mode-0600 input")
+    args = parser.parse_args(argv)
+    try:
+        require(not args.check or args.password_file is None, "--check does not accept a password input.")
+        setup = Setup()
+        config = parse_json(read_small(args.config.absolute(), private_owner=0))
+        if args.check:
+            setup.check(config)
+            print("Prerequisites passed. No files changed; collection and AI acceptance tests are still required.")
+            return 0
+        if args.password_file:
+            try:
+                password = read_small(args.password_file.absolute(), 4096, private_owner=0).decode("utf-8")
+            except UnicodeError as exc:
+                raise SetupError("Password input must be UTF-8.") from exc
+            if password.endswith("\n"):
+                password = password[:-1]
+        else:
+            require(sys.stdin.isatty() and sys.stderr.isatty(),
+                    "Interactive setup needs a terminal; unattended setup needs a private password file.")
+            password = getpass.getpass("New dashboard password: ")
+            require(password == getpass.getpass("Repeat dashboard password: "), "Passwords do not match.")
+        setup.apply(config, password)
+        print("Dashboard configured. Services remain stopped. Perform the documented activation and acceptance checks.")
+        return 0
+    except KeyboardInterrupt:
+        print("Setup interrupted. Services were not started.", file=sys.stderr)
+        return 130
+    except (SetupError, OSError, KeyError, subprocess.SubprocessError) as exc:
+        message = str(exc) if isinstance(exc, SetupError) else "A required account, file, permission, or local service check is unavailable."
+        print("Setup refused: " + message, file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

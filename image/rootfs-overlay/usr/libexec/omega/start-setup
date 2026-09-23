@@ -1,0 +1,8 @@
+#!/bin/bash -p
+set -euo pipefail
+
+# The owner starts this loopback-only setup session from an appliance terminal.
+# A clean environment prevents Python startup hooks from executing as root.
+exec /usr/bin/env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root \
+  LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC \
+  /usr/bin/python3 -B /opt/omega-setup/server.py "$@"

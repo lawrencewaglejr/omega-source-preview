@@ -1,0 +1,31 @@
+#!/bin/bash -p
+set -euo pipefail
+
+PATH=/usr/bin:/bin
+export PATH
+umask 0077
+
+archive=/usr/share/omega/oci/omega-services.tar
+checksum=/usr/share/omega/oci/omega-services.tar.sha256
+state=/var/lib/omega/oci-images.imported
+
+images_present() {
+  local image_id actual
+  for image_id in \
+    sha256:d6aeeefc36b9b4dd1ee86d7ff9ceab32a9f407279ad042baf03d7ede2df8abaf \
+    sha256:8f360b798da52d46cf9061282084c4e35a1c73d9678b8a888b55c193051a752d; do
+    actual=$(/usr/bin/docker image inspect --format '{{.Id}}' "$image_id" 2>/dev/null) || return 1
+    [ "$actual" = "$image_id" ] || return 1
+  done
+}
+
+cd /usr/share/omega/oci
+/usr/bin/sha256sum --check --status "$checksum"
+if [ -f "$state" ] && /usr/bin/cmp --silent "$checksum" "$state" && images_present; then
+  exit 0
+fi
+
+/usr/bin/docker image load --input "$archive"
+images_present
+/usr/bin/install -d -m 0750 -o root -g root /var/lib/omega
+/usr/bin/install -m 0600 -o root -g root "$checksum" "$state"

@@ -1,0 +1,42 @@
+[Unit]
+Description=OMEGA device-owned read-only Wazuh manager mirror
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/var/lib/omega-wazuh-mirror/config.json
+ConditionPathExists=/var/lib/omega-wazuh-mirror/known_hosts
+ConditionPathExists=/var/lib/omega-wazuh-mirror/id_ed25519
+
+[Service]
+Type=simple
+User=omega-mirror
+Group=omega-telemetry
+ExecStart=/usr/bin/python3 -B /opt/omega-setup/wazuh_mirror.py
+RuntimeDirectory=omega-wazuh-mirror
+RuntimeDirectoryMode=0700
+CacheDirectory=omega-wazuh-mirror
+CacheDirectoryMode=0700
+UMask=0027
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/var/lib/omega-wazuh-mirror
+ReadWritePaths=/var/lib/omega-wazuh-import
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+Nice=10
+CPUQuota=50%
+MemoryMax=256M
+TasksMax=16
+KillMode=control-group
+TimeoutStopSec=10
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

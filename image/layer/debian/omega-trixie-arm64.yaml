@@ -1,0 +1,31 @@
+# METABEGIN
+# X-Env-Layer-Name: omega-debian-trixie-arm64
+# X-Env-Layer-Category: distribution
+# X-Env-Layer-Desc: OMEGA arm64 base built only from its verified local repository.
+# X-Env-Layer-Version: 1.0.0
+# X-Env-Layer-Requires: locale-base
+# X-Env-Layer-Provides: debian-base
+# METAEND
+---
+mmdebstrap:
+  architectures:
+    - arm64
+  mode: auto
+  variant: minbase
+  suite: omega
+  mirrors:
+    - deb [trusted=yes] copy://${SRCROOT}/apt-repository omega main
+  aptopts:
+    - APT::Install-Suggests "false"
+    - APT::Install-Recommends "false"
+    - APT::Sandbox::User "root"
+  dpkgopts:
+    - path-exclude=/usr/share/man/*
+    - path-include=/usr/share/man/man[1-9]/*
+    - path-exclude=/usr/share/locale/*
+    - path-include=/usr/share/locale/locale.alias
+    - path-exclude=/usr/share/doc/*
+    - path-include=/usr/share/doc/*/copyright
+    - path-include=/usr/share/doc/*/changelog.Debian.*
+    - path-exclude=/usr/share/{doc,info,man,omf,help,gnome/help}/*
+    - path-exclude=/usr/share/lintian/*

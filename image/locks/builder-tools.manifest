@@ -1,0 +1,6 @@
+omega-builder-tools-manifest-v1
+object_count	3
+columns	name	filename	size	sha256
+bdebstrap	bdebstrap-0.7.0.tar.gz	33465	c8675f637af16a4471c8f61627895d21e56ef5d4bd13fa2a18cd01513395a009
+genimage	genimage-20.tar.gz	116964	4cadce884f920a4663c59652f1b87787772628ee4e2867a48e94c69f122fae57
+libconfuse	libconfuse-3.3.tar.gz	123482	cb90c06f2dbec971792af576d5b9a382fb3c4ca2b1deea55ea262b403f4e641e

@@ -1,0 +1,16 @@
+[Unit]
+Description=OMEGA EveBox container
+Requires=docker.service omega-oci-import.service suricata.service
+After=docker.service omega-oci-import.service suricata.service
+ConditionPathExists=/etc/omega/evebox.env
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/bin/docker rm -f omega-evebox
+ExecStart=/usr/bin/docker run --rm --pull=never --name omega-evebox --network host --env-file /etc/omega/evebox.env --volume /var/log/suricata:/var/log/suricata:ro --volume /var/lib/omega/evebox:/var/lib/evebox sha256:d6aeeefc36b9b4dd1ee86d7ff9ceab32a9f407279ad042baf03d7ede2df8abaf /bin/evebox server --sqlite /var/log/suricata/eve.json
+ExecStop=/usr/bin/docker stop -t 30 omega-evebox
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+# METABEGIN
+# X-Env-Layer-Name: omega-trixie-minbase
+# X-Env-Layer-Category: suite
+# X-Env-Layer-Desc: Generic OMEGA Raspberry Pi 5 appliance image.
+# X-Env-Layer-Version: 1.0.0
+# X-Env-Layer-Requires: omega-debian-trixie-arm64,
+#  rpi-misc-utils,
+#  rpi-essential-base,
+#  rpi-misc-skel,
+#  systemd-net-min,
+#  systemd-timesyncd,
+#  wireless-regulatory,
+#  omega-services
+# METAEND
+---

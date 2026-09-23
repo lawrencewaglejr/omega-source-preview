@@ -1,0 +1,252 @@
+#!/usr/bin/python3
+"""First-use local Wazuh connector provisioning. Never configures the manager."""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import datetime as dt
+import fcntl
+import grp
+import json
+import os
+from pathlib import Path
+import pwd
+import stat
+import subprocess
+import sys
+
+sys.path.insert(0, "/opt/omega-setup")
+from wazuh_mirror import (STATE, IMPORT, MirrorError, atomic_write, known_hosts,
+                         open_directory, parse_json, public_key, read_file,
+                         require, status as mirror_status, validate_config)
+
+SetupError = MirrorError
+UNIT = "omega-wazuh-mirror.service"
+
+
+def lookup_accounts():
+    account = pwd.getpwnam("omega-mirror")
+    telemetry = grp.getgrnam("omega-telemetry").gr_gid
+    require(account.pw_uid != 0 and account.pw_shell in ("/usr/sbin/nologin", "/sbin/nologin", "/bin/false"),
+            "Install the dedicated non-root, non-login omega-mirror service account.")
+    require(telemetry in os.getgrouplist("omega-mirror", account.pw_gid),
+            "The mirror account needs omega-telemetry membership.")
+    return {"uid": account.pw_uid, "gid": account.pw_gid, "telemetry_gid": telemetry}
+
+
+class Provisioner:
+    """Root-only, first-use helper. Injected root/runner/accounts support tests.
+
+    identity() returns public_key and fingerprint without replacing an identity.
+    configure({host,user,port,host_key}) saves verified settings and enables the
+    fixed service. Corrections are allowed only before dashboard provisioning;
+    existing device keys and mirrored evidence are preserved.
+    """
+    def __init__(self, root=Path("/"), *, runner=subprocess.run, account_lookup=lookup_accounts):
+        self.root = Path(root)
+        self.runner = runner
+        self.account_lookup = account_lookup
+
+    def path(self, absolute):
+        return self.root / absolute.lstrip("/")
+
+    @contextlib.contextmanager
+    def lock(self):
+        if self.root == Path("/"):
+            require(os.geteuid() == 0, "Run manager connector provisioning as root on the appliance.")
+        run = self.path("/run")
+        parent = open_directory(run)
+        try:
+            descriptor = os.open("omega-wazuh-setup.lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW,
+                                 0o600, dir_fd=parent)
+        finally:
+            os.close(parent)
+        try:
+            info = os.fstat(descriptor)
+            require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.geteuid()
+                    and stat.S_IMODE(info.st_mode) == 0o600, "Unsafe manager provisioning lock.")
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise MirrorError("Another manager setup operation is running.") from exc
+            yield
+        finally:
+            os.close(descriptor)
+
+    def unused_dashboard(self):
+        for path in ("/etc/omega/dashboard.ready", "/etc/omega/dashboard.env", "/var/lib/omega-dashboard"):
+            require(not os.path.lexists(self.path(path)),
+                    "Existing appliance configuration or evidence must not be overwritten; use the owner recovery process.")
+
+    def fresh(self):
+        self.unused_dashboard()
+        for path in (STATE + "/config.json", STATE + "/known_hosts", IMPORT):
+            require(not os.path.lexists(self.path(path)),
+                    "Existing manager configuration or evidence must not be overwritten by fresh setup.")
+
+    def identity(self):
+        with self.lock():
+            return self._identity()
+
+    def _identity(self):
+        accounts = self.account_lookup()
+        state = self.path(STATE)
+        if os.path.lexists(state):
+            directory = open_directory(state)
+            try:
+                info = os.fstat(directory)
+                require(info.st_uid in (os.geteuid(), accounts["uid"])
+                        and stat.S_IMODE(info.st_mode) == 0o700, "Unsafe existing manager identity directory.")
+            finally:
+                os.close(directory)
+            private = read_file(state / "id_ed25519", owner=info.st_uid, mode=0o600)
+            require(private.startswith(b"-----BEGIN OPENSSH PRIVATE KEY-----\n"),
+                    "Existing device identity is incomplete; it will not be replaced.")
+            key, fingerprint = public_key(read_file(state / "id_ed25519.pub", owner=info.st_uid, mode=0o600).decode().strip())
+            return {"public_key": key + " omega-device-wazuh", "fingerprint": fingerprint}
+        self.fresh()
+        parent = open_directory(state.parent)
+        try:
+            os.mkdir(state.name, 0o700, dir_fd=parent)
+        finally:
+            os.close(parent)
+        # During first-use setup this directory remains root-owned and private.
+        # Ownership passes to the service only after every setting is complete.
+        try:
+            result = self.runner(["/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C",
+                                  "omega-device-wazuh", "-f", str(state / "id_ed25519")],
+                                 stdin=subprocess.DEVNULL, capture_output=True, timeout=15, check=False,
+                                 env={"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"})
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise MirrorError("Device key generation failed; incomplete identity is preserved for owner recovery.") from exc
+        require(result.returncode == 0, "Device key generation failed; existing identity files are never replaced.")
+        os.chmod(state / "id_ed25519.pub", 0o600, follow_symlinks=False)
+        return self._identity()
+
+    def configure(self, config):
+        config = validate_config(config)
+        with self.lock():
+            self.unused_dashboard()
+            if os.path.lexists(self.path(STATE + "/config.json")):
+                return self._correct(config)
+            self.fresh()
+            self._identity()
+            accounts = self.account_lookup()
+            state, destination = self.path(STATE), self.path(IMPORT)
+            info = state.lstat()
+            require(info.st_uid == os.geteuid(), "An activated device identity cannot be configured again.")
+            for executable in ("/usr/bin/ssh", "/usr/bin/rsync"):
+                target = self.path(executable)
+                require(target.is_file() and os.access(target, os.X_OK), "The pinned SSH and rsync programs must be installed.")
+            require(self.path("/usr/lib/systemd/system/" + UNIT).is_file(), "The mirror service must be installed.")
+            # No service or personal feed is stopped or replaced by this helper.
+            try:
+                probe = self.runner(["/usr/bin/systemctl", "is-active", "--quiet", UNIT],
+                                    stdin=subprocess.DEVNULL, capture_output=True, timeout=10, check=False)
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise MirrorError("Unable to check manager mirror service state.") from exc
+            require(probe.returncode in (3, 4), "Stop or inspect the existing mirror service before first-use setup.")
+            parent = open_directory(destination.parent)
+            try:
+                os.mkdir(destination.name, 0o750, dir_fd=parent)
+            finally:
+                os.close(parent)
+            os.chown(destination, accounts["uid"], accounts["telemetry_gid"])
+            os.chmod(destination, 0o2750)
+            for source in ("alerts", "archives"):
+                target = destination / source
+                target.mkdir(mode=0o750)
+                os.chown(target, accounts["uid"], accounts["telemetry_gid"])
+                os.chmod(target, 0o2750)
+            atomic_write(state / "known_hosts", known_hosts(config).encode(), 0o600, exclusive=True)
+            atomic_write(state / "config.json", (json.dumps(config) + "\n").encode(), 0o600, exclusive=True)
+            for name in ("id_ed25519", "id_ed25519.pub", "known_hosts", "config.json"):
+                os.chown(state / name, accounts["uid"], accounts["gid"], follow_symlinks=False)
+            os.chown(state, accounts["uid"], accounts["gid"], follow_symlinks=False)
+            return self._start()
+
+    def _correct(self, config):
+        """Repair a setup typo without replacing identity or deleting evidence."""
+        accounts = self.account_lookup()
+        state = self.path(STATE)
+        directory = open_directory(state)
+        try:
+            info = os.fstat(directory)
+            require(info.st_uid == accounts["uid"] and stat.S_IMODE(info.st_mode) == 0o700
+                    and set(os.listdir(directory)) == {"config.json", "known_hosts", "id_ed25519", "id_ed25519.pub"},
+                    "Only a complete device-created connector can be corrected during setup.")
+        finally:
+            os.close(directory)
+        self._identity()
+        old_config = read_file(state / "config.json", owner=accounts["uid"], mode=0o600)
+        previous = validate_config(parse_json(old_config))
+        old_hosts = read_file(state / "known_hosts", owner=accounts["uid"], mode=0o600)
+        require(old_hosts.decode() == known_hosts(previous), "Existing manager host binding needs owner recovery.")
+        if previous == config:
+            return self._start()
+        try:
+            stopped = self.runner(["/usr/bin/systemctl", "stop", UNIT], stdin=subprocess.DEVNULL,
+                                  capture_output=True, timeout=15, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise MirrorError("Unable to stop the manager mirror before correcting its connection.") from exc
+        require(stopped.returncode == 0, "Unable to stop the manager mirror before correcting its connection.")
+        pending = {"checked_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                   "sources": {name: {"ok": False, "error": "connection_changed"} for name in ("alerts", "archives")}}
+        atomic_write(self.path(IMPORT + "/sync-status.json"), (json.dumps(pending) + "\n").encode(),
+                     0o640, owner=accounts["uid"], group=accounts["telemetry_gid"])
+        os.chown(state, os.geteuid(), os.getegid(), follow_symlinks=False)
+        try:
+            try:
+                atomic_write(state / "known_hosts", known_hosts(config).encode(), 0o600,
+                             owner=accounts["uid"], group=accounts["gid"])
+                atomic_write(state / "config.json", (json.dumps(config) + "\n").encode(), 0o600,
+                             owner=accounts["uid"], group=accounts["gid"])
+            except (OSError, MirrorError):
+                atomic_write(state / "known_hosts", old_hosts, 0o600, owner=accounts["uid"], group=accounts["gid"])
+                atomic_write(state / "config.json", old_config, 0o600, owner=accounts["uid"], group=accounts["gid"])
+                raise MirrorError("Connection correction failed; prior settings remain and the mirror is stopped.")
+        finally:
+            os.chown(state, accounts["uid"], accounts["gid"], follow_symlinks=False)
+        return self._start()
+
+    def _start(self):
+        try:
+            started = self.runner(["/usr/bin/systemctl", "enable", "--now", UNIT],
+                                  stdin=subprocess.DEVNULL, capture_output=True, timeout=15, check=False)
+            activated = started.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            activated = False
+        result = self.status()
+        if not activated:
+            result["message"] = "Manager settings are saved, but service activation failed. Retry the connection or inspect omega-wazuh-mirror.service."
+        return result
+
+    def status(self):
+        return mirror_status(self.root)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument("--identity", action="store_true")
+    action.add_argument("--status", action="store_true")
+    action.add_argument("--configure", metavar="PRIVATE_JSON")
+    args = parser.parse_args()
+    require(os.geteuid() == 0, "Run this helper as root on the appliance.")
+    provisioner = Provisioner()
+    try:
+        if args.identity:
+            result = provisioner.identity()
+        elif args.status:
+            result = provisioner.status()
+        else:
+            result = provisioner.configure(parse_json(read_file(Path(args.configure), owner=0, mode=0o600)))
+        print(json.dumps(result))
+    except (MirrorError, OSError, KeyError, UnicodeError) as exc:
+        print("Manager connector setup failed: " + (str(exc) if isinstance(exc, MirrorError) else "Check local prerequisites and private file permissions."), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
