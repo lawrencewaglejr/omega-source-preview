@@ -1,0 +1,10 @@
+OMEGA_COMMAND_MANIFEST_V1
+scripts/omega.sh	/usr/local/bin/omega	0755	59e240e6dceaeb1817f5f40c5a41caf6a1787dec85d2a6d4c01fedcad17fa871	-
+scripts/omega-status.sh	/usr/local/bin/omega-status	0755	d22c1937bfad06354929aeb94d44cbc237e5b2221c88182f70ee5ed58ca90f51	-
+scripts/omega-health.sh	/usr/local/bin/omega-health	0755	4d35cb6815580658827afa2d1ecb973fafc29410f950cf65554e81a65f7d5ab8	/opt/omega/scripts/omega-health.sh
+scripts/omega-report.sh	/usr/local/bin/omega-report	0755	f4bfe37a9374bd986ec8a94303a61a370daab399032c4083ba765422a7fded99,848f8f6a8c53c1556a65f8dffa8020e658a24acaa6a9a2b0eed3a6b555bd4620	/opt/omega/scripts/omega-report
+scripts/omega-alerts.sh	/usr/local/bin/omega-alerts	0755	2698c6e1064117f34cdcfa864fdde5e73a35368113568f772dba059845ab7580	-
+scripts/omega-summary.sh	/usr/local/bin/omega-summary	0755	0f7b5b40fe46816ab4d5422050271bc7c1167157148ed86b1211419cb059dbfa	-
+scripts/omega-doctor.sh	/usr/local/bin/omega-doctor	0755	0c9cd57dc215d9683cc5c35d009455d79ac1670da5e31ad7cd3bc64b7f9e7860	-
+scripts/omega-bundle.sh	/usr/local/bin/omega-bundle	0755	a13f4974b8a73845d4f82cb06d91e00f25c2f8f32f49db97e45ad36713ac0300	-
+scripts/omega-cleanup.sh	/usr/local/bin/omega-cleanup	0755	9b74118385c23fd04c1d59f1b8e88410cd22c88aed47b3be3657d46010554a09	-

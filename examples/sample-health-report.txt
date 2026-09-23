@@ -1,0 +1,7 @@
+OMEGA fictional health report
+
+This file contains synthetic demonstration data only.
+Appliance: example-appliance
+Address: 192.168.50.10
+Source status: unavailable in sample
+No network assessment has been performed.

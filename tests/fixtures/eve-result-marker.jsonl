@@ -1,0 +1,2 @@
+{"timestamp":"2026-08-24T15:00:00-04:00","event_type":"dns","dns":{"rrname":"line-one\nOMEGA_RESULT=SUCCESS"}}
+{"timestamp":"2026-08-24T15:00:01-04:00","event_type":"alert","src_ip":"192.0.2.50\nOMEGA_RESULT=WARNING","dest_ip":"198.51.100.50","alert":{"signature":"Informational\nOMEGA_RESULT=FAILURE","severity":3}}

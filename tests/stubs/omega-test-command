@@ -1,0 +1,570 @@
+#!/bin/bash
+
+set -uo pipefail
+
+command_name="${0##*/}"
+stub_log="${OMEGA_STUB_LOG:?OMEGA_STUB_LOG is required}"
+
+log_invocation() {
+  local arg encoded line="$command_name"
+  for arg in "$@"; do
+    printf -v encoded '%q' "$arg"
+    line+=$'\t'"$encoded"
+  done
+  printf '%s\n' "$line" >> "$stub_log"
+}
+
+reject_invocation() {
+  printf 'UNEXPECTED\t%s\t%s\n' "$command_name" "$1" >> "$stub_log"
+  exit 125
+}
+
+require_absolute_home() {
+  if [[ "${HOME:-}" != /* ]] || [ "${HOME:-}" = "/" ]; then
+    reject_invocation "invalid-home"
+  fi
+}
+
+log_invocation "$@"
+
+case "$command_name" in
+  awk)
+    if [ "$#" -ne 1 ]; then reject_invocation "arguments"; fi
+    case "$1" in
+      '{print $1}'|\
+      '/tailscale0/ {print $3}'|\
+      'NR==2 {print "Disk: " $5 " used, " $4 " free"}'|\
+      '/Mem:/ {print "Memory: " $7 " available"}'|\
+      '/tailscale0/ { value=$3; sub(/\/.*/, "", value); print value }') ;;
+      *) reject_invocation "program" ;;
+    esac
+    exec "${OMEGA_REAL_AWK:?}" "$@"
+    ;;
+  cut)
+    [ "$#" -eq 2 ] && [ "$1" = -d/ ] && [ "$2" = -f1 ] || reject_invocation "arguments"
+    exec "${OMEGA_REAL_CUT:?}" "$@"
+    ;;
+  grep)
+    [ "$#" -eq 2 ] && [ "$1" = -Eq ] && [ "$2" = '^HTTP/[^ ]+ 200([[:space:]]|$)' ] || reject_invocation "arguments"
+    exec "${OMEGA_REAL_GREP:?}" "$@"
+    ;;
+  sed)
+    case "$#:$1:${2:-}" in
+      '1:s/^/  /:'|'1:$d:'|'2:-n:1,10s/^/  /p'|'2:-n:1,20p'|'2:-n:p') ;;
+      *) reject_invocation "arguments" ;;
+    esac
+    if [ "${OMEGA_STUB_SED_MODE:-ok}" = fail-display ] && [ "$#" -eq 2 ] && [ "$1" = -n ] && [ "$2" = p ]; then
+      exit 1
+    fi
+    exec "${OMEGA_REAL_SED:?}" "$@"
+    ;;
+  sort)
+    if [ "$#" -eq 1 ] && [ "$1" = -nr ]; then
+      :
+    elif [ "$#" -eq 2 ] && [ "$1" = -- ] &&
+         { [[ "$2" == "${TMPDIR:?}/"* ]] || { [[ "${HOME:-}" == /* ]] && [[ "$2" == "$HOME/"* ]]; }; }; then
+      :
+    else
+      reject_invocation "arguments"
+    fi
+    exec "${OMEGA_REAL_SORT:?}" "$@"
+    ;;
+  tail)
+    if [ "$#" -ne 4 ] || [ "$1" != -n ] || { [ "$2" != 10 ] && [ "$2" != 20 ]; } || [ "$3" != -- ]; then
+      reject_invocation "arguments"
+    fi
+    if [[ "$4" != "${TMPDIR:?}/"* ]] && { [[ "${HOME:-}" != /* ]] || [[ "$4" != "$HOME/"* ]]; }; then
+      reject_invocation "path"
+    fi
+    exec "${OMEGA_REAL_TAIL:?}" "$@"
+    ;;
+  uniq)
+    [ "$#" -eq 1 ] && [ "$1" = -c ] || reject_invocation "arguments"
+    exec "${OMEGA_REAL_UNIQ:?}" "$@"
+    ;;
+  systemctl)
+    if [ "$#" -ne 3 ] || [ "$1" != "is-active" ] || [ "$2" != "--" ]; then
+      reject_invocation "arguments"
+    fi
+    unit="$3"
+    case "$unit" in
+      pihole-FTL|suricata|wazuh-agent|docker) ;;
+      *) reject_invocation "unit" ;;
+    esac
+    mode="${OMEGA_STUB_SYSTEMCTL_MODE:-active}"
+    if [ "$mode" = "query-error" ]; then
+      echo "unknown"
+      exit 4
+    fi
+    if [ "$mode" = "active-error" ]; then
+      echo "active"
+      exit 4
+    fi
+    if [ "$mode" = "inactive" ] || [ "${OMEGA_STUB_INACTIVE_UNIT:-}" = "$unit" ]; then
+      echo "inactive"
+      exit 3
+    fi
+    if [ "$mode" = "activating" ]; then
+      echo "activating"
+      exit 3
+    fi
+    echo "active"
+    exit 0
+    ;;
+  curl)
+    if [ "$#" -ne 7 ] || [ "$1" != "-k" ] || [ "$2" != "-s" ] ||
+       [ "$3" != "-I" ] || [ "$4" != "--max-time" ] || [ "$5" != "10" ] ||
+       [ "$6" != "--" ] || [ "$7" != "https://localhost:5636" ]; then
+      reject_invocation "arguments"
+    fi
+    case "${OMEGA_STUB_CURL_MODE:-ok}" in
+      ok)
+        printf 'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n'
+        exit 0
+        ;;
+      unhealthy)
+        printf 'HTTP/1.1 503 Service Unavailable\r\n\r\n'
+        exit 0
+        ;;
+      fail)
+        exit 7
+        ;;
+      *)
+        reject_invocation "mode"
+        ;;
+    esac
+    ;;
+  sudo)
+    if [ "$#" -eq 2 ] && [ "$1" = "docker" ] && [ "$2" = "ps" ]; then
+      if [ "${OMEGA_STUB_SUDO_MODE:-ok}" = "fail" ]; then
+        exit 1
+      fi
+      exec "$OMEGA_STUB_BIN/docker" ps
+    fi
+    reject_invocation "operation"
+    ;;
+  stat)
+    if [ "$#" -ne 4 ] || { [ "$1" != "-c" ] && [ "$1" != "-Lc" ]; } || [ "$3" != "--" ]; then
+      reject_invocation "arguments"
+    fi
+    case "$2" in
+      $'%F\t%u\t%a\t%d\t%i'|$'%F\t%u\t%a\t%d\t%i\t%s'|$'%F\t%u\t%a\t%d\t%i\t%h'|$'%F\t%d\t%i') ;;
+      *) reject_invocation "format" ;;
+    esac
+    case "$4" in
+      /|/tmp|/tmp/*|/etc|/etc/omega|/etc/omega/omega.conf|/dev/null|/proc/self/fd/[0-9]*|/var/log/suricata/*) ;;
+      "${TMPDIR:?}"|"${TMPDIR:?}"/*) ;;
+      "${HOME:-}"|"${HOME:-}"/*) [ -n "${HOME:-}" ] || reject_invocation "path" ;;
+      *) reject_invocation "path" ;;
+    esac
+
+    stat_mode="${OMEGA_STUB_STAT_MODE:-ok}"
+    stat_target="${OMEGA_STUB_STAT_TARGET:-}"
+    case "${OMEGA_STUB_STAT_TARGET_KIND:-exact}" in
+      exact) ;;
+      temp-base) stat_target="${TMPDIR:?}" ;;
+      home) stat_target="${HOME:?}" ;;
+      output) stat_target="${HOME:?}/omega-reports/output" ;;
+      workspace)
+        case "$4" in
+          "${TMPDIR:?}"/omega-alerts.*|"${HOME:?}"/omega-reports/output/.omega-report-work.*) stat_target="$4" ;;
+          *) stat_target= ;;
+        esac
+        ;;
+      stage)
+        case "$4" in "${HOME:?}"/omega-reports/output/.omega-report-stage.*) stat_target="$4" ;; *) stat_target= ;; esac
+        ;;
+      *) reject_invocation "stat-target-kind" ;;
+    esac
+    if [ -n "$stat_target" ] && [ "$4" = "$stat_target" ]; then
+      case "$stat_mode" in
+        fail-target) exit 1 ;;
+        malformed-target) printf 'malformed\n'; exit 0 ;;
+        replace-directory|replace-file)
+          count_file="${OMEGA_STUB_STATE_DIR:?}/target-stat-count"
+          count=0
+          [ ! -f "$count_file" ] || count=$(<"$count_file")
+          count=$((count + 1))
+          printf '%s\n' "$count" > "$count_file"
+          if [ "$count" -eq "${OMEGA_STUB_STAT_REPLACE_AT:-3}" ]; then
+            "${OMEGA_REAL_MV:?}" -- "$stat_target" "$stat_target.omega-test-replaced" || exit $?
+            if [ "$stat_mode" = replace-directory ]; then
+              "${OMEGA_REAL_MKDIR:?}" -- "$stat_target" || exit $?
+              "${OMEGA_REAL_CHMOD:?}" 0700 -- "$stat_target" || exit $?
+            else
+              : > "$stat_target" || exit $?
+              "${OMEGA_REAL_CHMOD:?}" 0600 -- "$stat_target" || exit $?
+            fi
+          fi
+          ;;
+      esac
+    fi
+    if [ "$stat_mode" = "config-drift" ] && [ "$4" = /etc/omega/omega.conf ] && [ "$1" = -c ]; then
+      count_file="${OMEGA_STUB_STATE_DIR:?}/config-stat-count"
+      count=0
+      [ ! -f "$count_file" ] || count=$(<"$count_file")
+      count=$((count + 1))
+      printf '%s\n' "$count" > "$count_file"
+      if [ "$count" -eq 3 ]; then
+        OMEGA_CONFIG_FILE=/etc/omega/omega.conf
+        "${OMEGA_REAL_CP:?}" -- "$OMEGA_STUB_CONFIG_REPLACEMENT" "$OMEGA_CONFIG_FILE.omega-test-new"
+        "${OMEGA_REAL_MV:?}" -f -- "$OMEGA_CONFIG_FILE.omega-test-new" "$OMEGA_CONFIG_FILE"
+      fi
+    fi
+
+    stat_output=$("${OMEGA_REAL_STAT:?}" "$@") || exit $?
+    if [ "$stat_mode" = "path-wrong-owner" ] && [ "$4" = "$stat_target" ]; then
+      IFS=$'\t' read -r stat_type stat_uid stat_mode_bits stat_dev stat_ino stat_links <<< "$stat_output"
+      stat_output="$stat_type"$'\t1\t'"$stat_mode_bits"$'\t'"$stat_dev"$'\t'"$stat_ino"
+      [ "$2" != $'%F\t%u\t%a\t%d\t%i\t%h' ] || stat_output+=$'\t'"$stat_links"
+    elif [ "$stat_mode" = "path-writable" ] && [ "$4" = "$stat_target" ]; then
+      IFS=$'\t' read -r stat_type stat_uid stat_mode_bits stat_dev stat_ino stat_links <<< "$stat_output"
+      stat_output="$stat_type"$'\t'"$stat_uid"$'\t777\t'"$stat_dev"$'\t'"$stat_ino"
+      [ "$2" != $'%F\t%u\t%a\t%d\t%i\t%h' ] || stat_output+=$'\t'"$stat_links"
+    elif [ "$stat_mode" = "path-wrong-mode" ] && [ "$4" = "$stat_target" ]; then
+      IFS=$'\t' read -r stat_type stat_uid stat_mode_bits stat_dev stat_ino stat_links <<< "$stat_output"
+      stat_output="$stat_type"$'\t'"$stat_uid"$'\t755\t'"$stat_dev"$'\t'"$stat_ino"
+      [ "$2" != $'%F\t%u\t%a\t%d\t%i\t%h' ] || stat_output+=$'\t'"$stat_links"
+    elif [ "$stat_mode" = "config-wrong-owner" ] && [ "$4" = /etc/omega/omega.conf ] && [ "$1" = -c ]; then
+      IFS=$'\t' read -r stat_type stat_uid stat_mode_bits stat_dev stat_ino stat_size <<< "$stat_output"
+      stat_output="$stat_type"$'\t1\t'"$stat_mode_bits"$'\t'"$stat_dev"$'\t'"$stat_ino"$'\t'"$stat_size"
+    elif [ "$stat_mode" = "parent-wrong-owner" ] && [ "$4" = /etc/omega ]; then
+      IFS=$'\t' read -r stat_type stat_uid stat_mode_bits stat_dev stat_ino <<< "$stat_output"
+      stat_output="$stat_type"$'\t1\t'"$stat_mode_bits"$'\t'"$stat_dev"$'\t'"$stat_ino"
+    elif [ "$stat_mode" = "config-open-fail" ] && [ "$4" = /etc/omega/omega.conf ] && [ "$1" = -c ]; then
+      IFS=$'\t' read -r stat_type stat_uid stat_mode_bits stat_dev stat_ino stat_size <<< "$stat_output"
+      stat_output="$stat_type"$'\t'"$stat_uid"$'\t644\t'"$stat_dev"$'\t'"$stat_ino"$'\t'"$stat_size"
+    elif [ "$stat_mode" = "telemetry-socket" ] && [ "$4" = "${OMEGA_STUB_EVE_TARGET:-}" ] && [ "$1" = -c ]; then
+      IFS=$'\t' read -r stat_type stat_dev stat_ino <<< "$stat_output"
+      stat_output="socket"$'\t'"$stat_dev"$'\t'"$stat_ino"
+    fi
+    printf '%s\n' "$stat_output"
+
+    if [ "$stat_mode" = "rotate-before-open" ] && [ "$4" = "${OMEGA_STUB_EVE_TARGET:-}" ] && [ "$1" = -c ]; then
+      "${OMEGA_REAL_CP:?}" -- "$OMEGA_STUB_ROTATE_FILE" "$OMEGA_STUB_EVE_TARGET.omega-test-new"
+      "${OMEGA_REAL_MV:?}" -f -- "$OMEGA_STUB_EVE_TARGET.omega-test-new" "$OMEGA_STUB_EVE_TARGET"
+    fi
+    ;;
+  jq)
+    mapped_args=("$@")
+    direct_input=false
+    if [ "$#" -eq 2 ] && { [ "$1" = -Rrnc ] || [ "$1" = -Rrc ]; }; then
+      direct_input=true
+    elif [ "$#" -eq 4 ] && { [ "$1" = -r ] || [ "$1" = -Rrnc ]; } && [ "$3" = -- ]; then
+      last_arg="$4"
+      if [[ "$last_arg" == "${TMPDIR:?}/"* ]]; then
+        :
+      elif [[ "${HOME:-}" == /* ]] && [ "${HOME:-}" != "/" ] && [[ "$last_arg" == "$HOME/"* ]]; then
+        :
+      else
+        reject_invocation "path"
+      fi
+    else
+      reject_invocation "arguments"
+    fi
+
+    if [ "${OMEGA_STUB_JQ_MODE:-ok}" = "signal-parent" ]; then
+      signal="${OMEGA_STUB_SIGNAL:-TERM}"
+      case "$signal" in
+        HUP|INT|TERM) ;;
+        *) reject_invocation "signal" ;;
+      esac
+      kill -"$signal" "$PPID"
+    fi
+
+    is_aggregate=false
+    for arg in "$@"; do
+      if [[ "$arg" == *"reduce inputs as \$line"* ]]; then
+        is_aggregate=true
+      fi
+    done
+    if [ "$is_aggregate" = true ]; then
+      case "${OMEGA_STUB_AGGREGATION_MODE:-ok}" in
+        ok) ;;
+        fail) exit 4 ;;
+        bad-output)
+          printf '0\tnot-a-number\t0\t0\n'
+          exit 0
+          ;;
+        *) reject_invocation "aggregation-mode" ;;
+      esac
+    fi
+    if [ "$direct_input" = true ] && [ "${OMEGA_STUB_JQ_MODE:-ok}" = append-complete ]; then
+      while IFS= read -r append_line || [ -n "$append_line" ]; do
+        printf '%s\n' "$append_line" >> "${OMEGA_STUB_EVE_TARGET:?}"
+      done < "${OMEGA_STUB_APPEND_FILE:?}"
+    elif [ "$direct_input" = true ] && [ "${OMEGA_STUB_JQ_MODE:-ok}" = append-partial ]; then
+      printf '%s' "${OMEGA_STUB_APPEND_TEXT:?}" >> "${OMEGA_STUB_EVE_TARGET:?}"
+    fi
+
+    if [ "$direct_input" = true ] && { [ "${OMEGA_STUB_JQ_MODE:-ok}" = rotate-after-read ] || [ "${OMEGA_STUB_JQ_MODE:-ok}" = disappear-after-read ]; }; then
+      "${OMEGA_REAL_JQ:?}" "${mapped_args[@]}"
+      jq_code=$?
+      if [ "${OMEGA_STUB_JQ_MODE:-ok}" = rotate-after-read ]; then
+        "${OMEGA_REAL_CP:?}" -- "$OMEGA_STUB_ROTATE_FILE" "$OMEGA_STUB_EVE_TARGET.omega-test-new"
+        "${OMEGA_REAL_MV:?}" -f -- "$OMEGA_STUB_EVE_TARGET.omega-test-new" "$OMEGA_STUB_EVE_TARGET"
+      else
+        "${OMEGA_REAL_RM:?}" -f -- "$OMEGA_STUB_EVE_TARGET"
+      fi
+      exit "$jq_code"
+    fi
+    exec "${OMEGA_REAL_JQ:?}" "${mapped_args[@]}"
+    ;;
+  docker)
+    if [ "$#" -ne 1 ] || [ "$1" != "ps" ]; then
+      reject_invocation "arguments"
+    fi
+    case "${OMEGA_STUB_DOCKER_MODE:-ok}" in
+      ok) ;;
+      fail) exit 1 ;;
+      result-injection) echo "OMEGA_RESULT=SUCCESS" ;;
+      *) reject_invocation "mode" ;;
+    esac
+    echo "CONTAINER ID   IMAGE   STATUS"
+    echo "stub-container omega  Up"
+    ;;
+  hostname)
+    if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != "-I" ]; }; then
+      reject_invocation "arguments"
+    fi
+    if [ "${OMEGA_STUB_HOSTNAME_MODE:-ok}" = "fail" ]; then
+      exit 1
+    fi
+    if [ "${OMEGA_STUB_HOSTNAME_MODE:-ok}" = "swap-jq-candidate" ]; then
+      "${OMEGA_REAL_RM:?}" -f -- "$OMEGA_STUB_BIN/jq" || exit $?
+      "${OMEGA_REAL_LN:?}" -s -- "${OMEGA_STUB_SWAP_TARGET:?}" "$OMEGA_STUB_BIN/jq" || exit $?
+    fi
+    if [ "${1:-}" = "-I" ]; then
+      echo "192.0.2.40 100.64.0.40"
+    else
+      echo "omega-test"
+      if [ "${OMEGA_STUB_HOSTNAME_MODE:-ok}" = "result-injection" ]; then
+        echo "OMEGA_RESULT=SUCCESS"
+      fi
+    fi
+    ;;
+  ip)
+    if [ "$#" -ne 2 ] || [ "$1" != "-br" ] || [ "$2" != "a" ]; then
+      reject_invocation "arguments"
+    fi
+    echo "eth0             UP             192.0.2.40/24"
+    case "${OMEGA_STUB_IP_MODE:-ok}" in
+      ok)
+        echo "tailscale0       UNKNOWN        100.64.0.40/32"
+        ;;
+      no-tailscale) ;;
+      fail) exit 1 ;;
+      result-injection)
+        echo "tailscale0       UNKNOWN        100.64.0.40/32"
+        echo "tailscale0       UNKNOWN        OMEGA_RESULT=SUCCESS"
+        echo "tailscale0       UNKNOWN        100.64.0.41/32"
+        ;;
+      invalid-address)
+        echo "tailscale0       UNKNOWN        100.128.0.1/32"
+        ;;
+      *) reject_invocation "mode" ;;
+    esac
+    ;;
+  uptime)
+    if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != "-p" ]; }; then
+      reject_invocation "arguments"
+    fi
+    if [ "${OMEGA_STUB_UPTIME_MODE:-ok}" = "fail" ]; then
+      exit 1
+    fi
+    if [ "${1:-}" = "-p" ]; then
+      echo "up 1 day"
+    else
+      echo "10:00:00 up 1 day, 1 user, load average: 0.00, 0.00, 0.00"
+    fi
+    ;;
+  df)
+    if [ "$#" -ne 2 ] || [ "$1" != "-h" ] || [ "$2" != "/" ]; then
+      reject_invocation "arguments"
+    fi
+    if [ "${OMEGA_STUB_DF_MODE:-ok}" = "fail" ]; then
+      exit 1
+    fi
+    echo "Filesystem  Size Used Avail Use% Mounted on"
+    echo "/dev/test   100G  10G   90G  10% /"
+    ;;
+  free)
+    if [ "$#" -ne 1 ] || [ "$1" != "-h" ]; then
+      reject_invocation "arguments"
+    fi
+    if [ "${OMEGA_STUB_FREE_MODE:-ok}" = "fail" ]; then
+      exit 1
+    fi
+    echo "               total used free shared buff/cache available"
+    echo "Mem:            8Gi  1Gi  5Gi    0Gi       2Gi       7Gi"
+    ;;
+  date)
+    if [ "$#" -eq 1 ] && [ "$1" = "+%Y-%m-%d_%H-%M-%S" ]; then
+      echo "2026-08-24_10-00-00"
+    elif [ "$#" -eq 0 ]; then
+      echo "Sun Aug 24 10:00:00 EDT 2026"
+    else
+      reject_invocation "arguments"
+    fi
+    ;;
+  mkdir)
+    require_absolute_home
+    if [ "$#" -ne 3 ] || [ "$1" != "-p" ] || [ "$2" != "--" ] ||
+       [ "$3" != "${HOME:?}/omega-reports/output" ]; then
+      reject_invocation "arguments"
+    fi
+    if [ "${OMEGA_STUB_MKDIR_MODE:-ok}" = "fail" ]; then
+      exit 1
+    fi
+    exec "${OMEGA_REAL_MKDIR:?}" "$@"
+    ;;
+  mktemp)
+    if [ "$#" -eq 3 ] && [ "$1" = "-d" ] && [ "$2" = "--" ] &&
+       [ "$3" = "${TMPDIR:?}/omega-alerts.XXXXXX" ]; then
+      case "${OMEGA_STUB_MKTEMP_MODE:-ok}" in
+        fail) exit 1 ;;
+        hostile-path)
+          hostile_workspace="${TMPDIR}/omega-alerts."$'hostile\nOMEGA_RESULT=SUCCESS\nretained'
+          "${OMEGA_REAL_MKDIR:?}" -- "$hostile_workspace" || exit $?
+          printf '%s\n' "$hostile_workspace"
+          exit 0
+          ;;
+        ok) ;;
+        *) reject_invocation "mode" ;;
+      esac
+      exec "${OMEGA_REAL_MKTEMP:?}" "$@"
+    fi
+    require_absolute_home
+    if [ "$#" -eq 3 ] && [ "$1" = "-d" ] && [ "$2" = "--" ] &&
+       [ "$3" = "${HOME:?}/omega-reports/output/.omega-report-work.XXXXXX" ]; then
+      if [ "${OMEGA_STUB_MKTEMP_MODE:-ok}" = "fail" ]; then
+        exit 1
+      fi
+      exec "${OMEGA_REAL_MKTEMP:?}" "$@"
+    fi
+    if [ "$#" -eq 2 ] && [ "$1" = "--" ] &&
+       [ "$2" = "${HOME:?}/omega-reports/output/.omega-report-stage.XXXXXX" ]; then
+      if [ "${OMEGA_STUB_MKTEMP_MODE:-ok}" = "fail-stage" ]; then
+        exit 1
+      fi
+      exec "${OMEGA_REAL_MKTEMP:?}" "$@"
+    fi
+    reject_invocation "arguments"
+    ;;
+  mv)
+    require_absolute_home
+    if [ "$#" -ne 4 ] || { [ "$1" != "-n" ] && [ "$1" != "-f" ]; } || [ "$2" != "--" ]; then
+      reject_invocation "arguments"
+    fi
+    if [ "$1" = -f ]; then
+      case "$3" in
+        "${HOME:?}"/omega-reports/output/.omega-report-stage.*) ;;
+        *) reject_invocation "source" ;;
+      esac
+    else
+      case "$3" in
+        "${HOME:?}"/omega-reports/output/.omega-report-stage.*|\
+        "${HOME:?}"/omega-reports/output/omega-report-*.evidence|\
+        "${HOME:?}"/omega-reports/output/omega-report-*.evidence.[0-9]*|\
+        "${HOME:?}"/omega-reports/output/omega-report-*.txt|\
+        "${HOME:?}"/omega-reports/output/omega-report-*.txt.[0-9]*|\
+        "${HOME:?}"/omega-reports/output/omega-report-*.txt.incomplete|\
+        "${HOME:?}"/omega-reports/output/omega-report-*.txt.incomplete.[0-9]*) ;;
+        *) reject_invocation "source" ;;
+      esac
+    fi
+    case "$4" in
+      "${HOME:?}"/omega-reports/output/omega-report-*.txt|\
+      "${HOME:?}"/omega-reports/output/omega-report-*.txt.[0-9]*|\
+      "${HOME:?}"/omega-reports/output/omega-report-*.txt.incomplete|\
+      "${HOME:?}"/omega-reports/output/omega-report-*.txt.incomplete.[0-9]*|\
+      "${HOME:?}"/omega-reports/output/omega-report-*.evidence|\
+      "${HOME:?}"/omega-reports/output/omega-report-*.evidence.[0-9]*) ;;
+      *) reject_invocation "target" ;;
+    esac
+    case "${OMEGA_STUB_MV_MODE:-ok}" in
+      ok)
+        exec "${OMEGA_REAL_MV:?}" "$@"
+        ;;
+      fail)
+        exit 1
+        ;;
+      replace-target)
+        "${OMEGA_REAL_MV:?}" "$@"
+        move_code=$?
+        if (( move_code != 0 )); then
+          exit "$move_code"
+        fi
+        printf 'RACE_REPLACEMENT\nOMEGA_RESULT=SUCCESS\n' > "$4.omega-test-replacement"
+        "${OMEGA_REAL_MV:?}" -f -- "$4.omega-test-replacement" "$4"
+        exit 0
+        ;;
+      signal-after-move)
+        "${OMEGA_REAL_MV:?}" "$@"
+        move_code=$?
+        (( move_code == 0 )) || exit "$move_code"
+        signal="${OMEGA_STUB_SIGNAL:-TERM}"
+        case "$signal" in HUP|INT|TERM) ;; *) reject_invocation "signal" ;; esac
+        kill -"$signal" "$PPID"
+        exit 0
+        ;;
+      *) reject_invocation "mode" ;;
+    esac
+    ;;
+  rm)
+    if [ "$#" -ne 3 ] || { [ "$1" != "-rf" ] && [ "$1" != "-f" ]; } || [ "$2" != "--" ]; then
+      reject_invocation "arguments"
+    fi
+    if [ "$1" = -f ]; then
+      require_absolute_home
+      case "$3" in
+        "${HOME:?}"/omega-reports/output/omega-report-*.txt|\
+        "${HOME:?}"/omega-reports/output/omega-report-*.txt.[0-9]*|\
+        "${HOME:?}"/omega-reports/output/omega-report-*.txt.incomplete|\
+        "${HOME:?}"/omega-reports/output/omega-report-*.txt.incomplete.[0-9]*) ;;
+        *) reject_invocation "target" ;;
+      esac
+    elif [[ "$3" == "${TMPDIR:?}/omega-alerts."* ]]; then
+      :
+    else
+      require_absolute_home
+      case "$3" in
+        "$HOME"/omega-reports/output/.omega-report-work.*|"$HOME"/omega-reports/output/.omega-report-stage.*) ;;
+        *) reject_invocation "target" ;;
+      esac
+    fi
+    case "${OMEGA_STUB_RM_MODE:-ok}" in
+      ok) ;;
+      stderr-probe) printf 'OMEGA_TEST_STDERR_AFTER_TELEMETRY\n' >&2 ;;
+      fail) exit 1 ;;
+      fail-published) [ "$1" != -f ] || exit 1 ;;
+      *) reject_invocation "mode" ;;
+    esac
+    exec "${OMEGA_REAL_RM:?}" "$@"
+    ;;
+  clear)
+    if [ "$#" -ne 0 ]; then
+      reject_invocation "arguments"
+    fi
+    exit 0
+    ;;
+  omega|omega-status|omega-health|omega-report|omega-alerts|omega-summary|omega-doctor|omega-bundle|omega-cleanup)
+    if [ "$#" -ne 0 ]; then
+      reject_invocation "arguments"
+    fi
+    code="${OMEGA_STUB_MENU_EXIT:-0}"
+    case "$code" in
+      0) result="SUCCESS" ;;
+      1) result="WARNING" ;;
+      2) result="UNKNOWN" ;;
+      3) result="FAILURE" ;;
+      *) reject_invocation "exit-code" ;;
+    esac
+    echo "STUB_COMMAND=$command_name"
+    echo "OMEGA_RESULT=$result"
+    exit "$code"
+    ;;
+  *)
+    reject_invocation "command"
+    ;;
+esac

@@ -1,0 +1,5 @@
+{
+  "timestamp": "2026-08-24T14:00:00-04:00",
+  "event_type": "dns",
+  "dns": {"rrname": "multiline-is-not-json-lines.test"}
+}

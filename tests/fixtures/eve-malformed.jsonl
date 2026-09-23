@@ -1,0 +1,2 @@
+{"timestamp":"2026-08-24T13:00:00-04:00","event_type":"dns","dns":{"rrname":"first-line-is-valid.test"}}
+{"timestamp":"2026-08-24T13:00:01-04:00","event_type":"alert","alert":

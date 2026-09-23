@@ -1,0 +1,2 @@
+ip,mac,hostname,vendor,owner,role,trust_level,notes
+192.168.50.10,02:00:00:00:00:10,example-appliance,Example vendor,Example owner,Appliance,trusted,Fictional example

@@ -1,0 +1,19 @@
+*.log
+*.tmp
+*.bak
+*.gz
+__pycache__/
+.env
+.DS_Store
+
+# Local state and release artifacts
+*.sqlite3*
+*.db
+*.zip
+*.img
+*.xz
+*.pem
+*.key
+.env.*
+reports/
+cache/

@@ -1,0 +1,2 @@
+{"timestamp":"2026-08-24T11:00:00-04:00","event_type":"dns","dns":{"rrname":"warning.test"}}
+{"timestamp":"2026-08-24T11:00:01-04:00","event_type":"alert","src_ip":"192.0.2.11","dest_ip":"198.51.100.21","alert":{"signature":"High priority test alert","severity":1}}

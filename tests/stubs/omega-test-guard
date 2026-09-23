@@ -1,0 +1,421 @@
+_omega_guard_log() {
+  local decision="$1" class="$2" command="$3"
+  builtin printf '%s\t%s\t%q\n' "$decision" "$class" "$command" >> "${OMEGA_EXEC_LOG:?}" || exit 125
+}
+
+_omega_guard_reject() {
+  _omega_guard_log DENY "$1" "$BASH_COMMAND"
+  builtin printf 'ISOLATION FAILURE: %s: %s\n' "$1" "$BASH_COMMAND" >&2
+  exit 125
+}
+
+_omega_guard_assignment_only() {
+  local text="$1" prefix name char quote="" rest
+  local index parens=0 braces=0 escaped=false
+
+  [[ "$text" == *=* ]] || return 1
+  prefix="${text%%=*}="
+  name="${prefix%=}"
+  name="${name%+}"
+  case "$name" in ''|[0-9]*|*[!A-Za-z0-9_]*) return 1 ;; esac
+  index=${#prefix}
+  while (( index < ${#text} )); do
+    char="${text:index:1}"
+    if [ "$escaped" = true ]; then
+      escaped=false
+    elif [ "$quote" = "'" ]; then
+      [ "$char" != "'" ] || quote=""
+    elif [ "$quote" = '"' ]; then
+      if [ "$char" = "\\" ]; then
+        escaped=true
+      elif [ "$char" = '"' ]; then
+        quote=""
+      fi
+    elif [ "$char" = "\\" ]; then
+      escaped=true
+    elif [ "$char" = "'" ]; then
+      quote="'"
+    elif [ "$char" = '"' ]; then
+      if [ "$quote" = '"' ]; then quote=""; else quote='"'; fi
+    elif [ -z "$quote" ]; then
+      case "$char" in
+        '(') parens=$((parens + 1)) ;;
+        ')') (( parens > 0 )) && parens=$((parens - 1)) ;;
+        '{') braces=$((braces + 1)) ;;
+        '}') (( braces > 0 )) && braces=$((braces - 1)) ;;
+        $'\t'|' ')
+          if (( parens == 0 && braces == 0 )); then
+            rest="${text:index}"
+            rest="${rest#"${rest%%[![:space:]]*}"}"
+            if [ -n "$rest" ]; then
+              _omega_guard_assignment_only "$rest" || return 1
+              return
+            fi
+          fi
+          ;;
+      esac
+    fi
+    index=$((index + 1))
+  done
+  [ -z "$quote" ] && (( parens == 0 && braces == 0 ))
+}
+
+_omega_guard_stub_source() {
+  local source="$1"
+  if [ -e "$source" ] &&
+     { [ "$source" -ef "$OMEGA_STUB_SOURCE" ] || [ "$source" -ef "$OMEGA_STUB_RM_SOURCE" ]; } &&
+     { [ "$source" = "$OMEGA_STUB_SOURCE" ] || [ "$source" = "$OMEGA_STUB_RM_SOURCE" ] ||
+       [ "$source" = /usr/local/libexec/jq ] ||
+       [[ "$source" == "$OMEGA_STUB_BIN/"* ]]; }; then
+    return 0
+  fi
+  case "$source" in
+    "$OMEGA_STUB_BIN"/omega|"$OMEGA_STUB_BIN"/omega-status|"$OMEGA_STUB_BIN"/omega-health|\
+    "$OMEGA_STUB_BIN"/omega-report|"$OMEGA_STUB_BIN"/omega-alerts|"$OMEGA_STUB_BIN"/omega-summary|\
+    "$OMEGA_STUB_BIN"/omega-doctor|"$OMEGA_STUB_BIN"/omega-bundle|"$OMEGA_STUB_BIN"/omega-cleanup)
+      [ -f "$source" ] && [ -x "$source" ] && [ ! -L "$source" ] ;;
+    *) return 1 ;;
+  esac
+}
+
+_omega_guard_production_source() {
+  local source="$1"
+  case "$source" in ''|main|"${BASH_ENV:-}") source="${OMEGA_TEST_PRODUCTION_SOURCE:-}" ;; esac
+  case "$source" in
+    "$OMEGA_REPO_ROOT"/scripts/omega.sh|\
+    "$OMEGA_REPO_ROOT"/scripts/omega-status.sh|\
+    "$OMEGA_REPO_ROOT"/scripts/omega-health.sh|\
+    "$OMEGA_REPO_ROOT"/scripts/omega-summary.sh|\
+    "$OMEGA_REPO_ROOT"/scripts/omega-alerts.sh|\
+    "$OMEGA_REPO_ROOT"/scripts/omega-report.sh|\
+    "$OMEGA_REPO_ROOT"/scripts/omega-doctor.sh) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+_omega_guard_stub_command() {
+  local name="$1" resolved kind expected_source hashed
+  case "$name" in
+    awk|cut|grep|sed|sort|tail|uniq|systemctl|curl|sudo|stat|jq|docker|hostname|ip|uptime|df|free|date|\
+    mkdir|mktemp|mv|rm|clear|omega|omega-status|omega-health|omega-report|omega-alerts|omega-summary|\
+    omega-doctor|omega-bundle|omega-cleanup) ;;
+    *) return 1 ;;
+  esac
+  kind=$(type -t -- "$name" 2>/dev/null) || kind=""
+  [ "$kind" = file ] || _omega_guard_reject external-type-mismatch
+  hashed=$(hash -t "$name" 2>/dev/null) || hashed=""
+  [ -z "$hashed" ] || [ "$hashed" = "$OMEGA_STUB_BIN/$name" ] || _omega_guard_reject external-hash-mismatch
+  resolved=$(type -P -- "$name" 2>/dev/null) || return 1
+  expected_source="$OMEGA_STUB_SOURCE"
+  [ "$name" != rm ] || expected_source="$OMEGA_STUB_RM_SOURCE"
+  [ "$resolved" = "$OMEGA_STUB_BIN/$name" ] && [ -f "$resolved" ] && [ -x "$resolved" ] ||
+    _omega_guard_reject external-identity-mismatch
+  case "$name" in omega|omega-*) [ ! -L "$resolved" ] || _omega_guard_reject external-identity-mismatch ;;
+    *) [ "$resolved" -ef "$expected_source" ] || _omega_guard_reject external-identity-mismatch ;;
+  esac
+}
+
+_omega_guard_variable_command() {
+  local token="$1" variable name path expected_source expected_path
+  [[ "$token" == '"$OMEGA_'*'"' ]] || return 1
+  variable="${token#\"\$}"
+  variable="${variable%\"}"
+  case "$variable" in
+    OMEGA_STAT|OMEGA_JQ|OMEGA_HOSTNAME|OMEGA_DATE|OMEGA_AWK|OMEGA_CUT|OMEGA_IP|OMEGA_UPTIME|OMEGA_DF|OMEGA_FREE|\
+    OMEGA_SYSTEMCTL|OMEGA_MKTEMP|OMEGA_RM|OMEGA_SORT|OMEGA_UNIQ|OMEGA_SED|OMEGA_TAIL|OMEGA_MKDIR|OMEGA_MV|\
+    OMEGA_CURL|OMEGA_GREP) ;;
+    *) return 1 ;;
+  esac
+  name="${variable#OMEGA_}"
+  name="${name,,}"
+  path="${!variable:-}"
+  expected_source="$OMEGA_STUB_SOURCE"
+  [ "$name" != rm ] || expected_source="$OMEGA_STUB_RM_SOURCE"
+  expected_path="$OMEGA_STUB_BIN/$name"
+  [ "$name" != jq ] || expected_path=/usr/local/libexec/jq
+  if [ "$name" = rm ] && [ "$OMEGA_STUB_RM_SOURCE" != "$OMEGA_STUB_SOURCE" ]; then
+    expected_path="$OMEGA_STUB_RM_SOURCE"
+  fi
+  [ "$path" = "$expected_path" ] && [ -f "$path" ] && [ -x "$path" ] &&
+    [ "$path" -ef "$expected_source" ] || _omega_guard_reject external-variable-identity-mismatch
+}
+
+_omega_guard_sigint_catchable() {
+  local signal_key signal_value signal_mask="" signal_low
+
+  while IFS=: read -r signal_key signal_value; do
+    [ "$signal_key" = SigIgn ] || continue
+    signal_mask="${signal_value#"${signal_value%%[![:space:]]*}"}"
+    signal_mask="${signal_mask%"${signal_mask##*[![:space:]]}"}"
+    break
+  done < "/proc/$BASHPID/status" || return 2
+  case "$signal_mask" in ''|*[!0-9A-Fa-f]*) return 2 ;; esac
+  signal_low="${signal_mask: -1}"
+  case "$signal_low" in 2|3|6|7|A|B|E|F|a|b|e|f) return 1 ;; esac
+  return 0
+}
+
+_omega_security_guard() {
+  local command="$BASH_COMMAND" first source="${BASH_SOURCE[1]:-${OMEGA_TEST_PRODUCTION_SOURCE:-}}" signal_state
+
+  if [ "$_OMEGA_STARTUP_SIGNAL_SENT" = false ] && [ -n "${OMEGA_TEST_STARTUP_SIGNAL:-}" ] &&
+     _omega_guard_production_source "$source" &&
+     { [[ "$command" == OMEGA_STAT=*'resolve_trusted_command stat'* ]] || [ "$command" = 'exit 3' ]; }; then
+    case "$OMEGA_TEST_STARTUP_SIGNAL" in HUP|INT|TERM) ;; *) _omega_guard_reject invalid-startup-signal ;; esac
+    if [ "$OMEGA_TEST_STARTUP_SIGNAL" = INT ]; then
+      _omega_guard_sigint_catchable
+      signal_state=$?
+      case "$signal_state" in
+        0) ;;
+        1) _omega_guard_reject signal-target-sigint-ignored ;;
+        *) _omega_guard_reject signal-target-state-unreadable ;;
+      esac
+    fi
+    _OMEGA_STARTUP_SIGNAL_SENT=true
+    builtin kill -s "$OMEGA_TEST_STARTUP_SIGNAL" "$BASHPID"
+  fi
+
+  if [ "$_OMEGA_FINAL_SIGNAL_SENT" = false ] && [ -n "${OMEGA_TEST_FINAL_SIGNAL_STAGE:-}" ] &&
+     _omega_guard_production_source "$source" &&
+     [[ "$source" == *omega-report.sh ]]; then
+    case "${OMEGA_TEST_FINAL_SIGNAL:-}" in HUP|INT|TERM) ;; *) _omega_guard_reject invalid-final-signal ;; esac
+    final_signal_match=false
+    case "$OMEGA_TEST_FINAL_SIGNAL_STAGE" in
+      descriptor) [[ "$command" == 'exec {REPORT_FD}< "$TMP_REPORT"' ]] && final_signal_match=true ;;
+      display) [[ "$command" == '"$OMEGA_SED" -n '\''p'\'' <&"$REPORT_FD"' ]] && final_signal_match=true ;;
+      stage) [[ "$command" == 'STAGE_CANDIDATE=$("$OMEGA_MKTEMP" '* ]] && final_signal_match=true ;;
+      copy) [[ "$command" == 'builtin printf '\''%s\n'\'' "$report_line" >&"$STAGE_FD"' ]] && final_signal_match=true ;;
+      cleanup) [ "$command" = cleanup_workspace ] && final_signal_match=true ;;
+      marker) [ "$command" = 'REPORT_RESULT=$(result_name)' ] && final_signal_match=true ;;
+      postpublish) [ "$command" = 'PUBLISH_STAGE_ID=""' ] && final_signal_match=true ;;
+      *) _omega_guard_reject invalid-final-signal-stage ;;
+    esac
+    if [ "$final_signal_match" = true ]; then
+      if [ "$OMEGA_TEST_FINAL_SIGNAL" = INT ]; then
+        _omega_guard_sigint_catchable
+        signal_state=$?
+        case "$signal_state" in
+          0) ;;
+          1) _omega_guard_reject signal-target-sigint-ignored ;;
+          *) _omega_guard_reject signal-target-state-unreadable ;;
+        esac
+      fi
+      _OMEGA_FINAL_SIGNAL_SENT=true
+      builtin kill -s "$OMEGA_TEST_FINAL_SIGNAL" "$BASHPID"
+    fi
+  fi
+
+  if [ "$PATH" != "$OMEGA_TRUSTED_PATH" ]; then
+    if _omega_guard_production_source "$source" &&
+       [ "$command" = "PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'" ]; then
+      _omega_guard_log ALLOW hostile-path-reset "$command"
+      return
+    fi
+    _omega_guard_reject path-drift
+  fi
+  [[ "$-" == *T* ]] || _omega_guard_reject functrace-disabled
+  first="${command%%[[:space:]]*}"
+
+  case "$first" in
+    set|trap|command|type|exec|builtin|enable|eval|source|.|unset|readonly|declare|typeset|shopt|export|umask|kill|\
+    echo|printf|read|local|return|exit|true|false|:|continue|break|'[')
+      [ "$(type -t -- "$first" 2>/dev/null)" = builtin ] || _omega_guard_reject builtin-type-mismatch ;;
+    case|for|while|until|'[[')
+      [ "$(type -t -- "$first" 2>/dev/null)" = keyword ] || _omega_guard_reject keyword-type-mismatch ;;
+  esac
+
+  case "$first" in
+    PATH=*)
+      [ "$command" = "PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'" ] ||
+        _omega_guard_reject immutable-state-mutation
+      _omega_guard_log ALLOW trusted-path-bootstrap "$command"
+      return ;;
+    BASH_ENV=*|HOME=*|TMPDIR=*|OMEGA_EXEC_LOG=*|OMEGA_STUB_BIN=*|OMEGA_STUB_SOURCE=*|OMEGA_STUB_RM_SOURCE=*|OMEGA_REPO_ROOT=*|OMEGA_REAL_*=*)
+      _omega_guard_reject immutable-state-mutation ;;
+    IFS=*)
+      [[ "$command" == IFS=*' read '* ]] || _omega_guard_reject assignment-prefixed-dispatch
+      _omega_guard_log ALLOW scoped-read "$command"
+      return ;;
+    *=*|*+=*)
+      _omega_guard_assignment_only "$command" || _omega_guard_reject assignment-prefixed-dispatch
+      _omega_guard_log ALLOW assignment "$command"
+      return ;;
+    set)
+      [ "$command" = 'set -uo pipefail' ] || _omega_guard_reject set-mutation
+      _omega_guard_log ALLOW shell-options "$command"
+      return ;;
+    trap)
+      case "$command" in
+        "trap '' HUP INT TERM"|'trap cleanup EXIT'|'trap handle_signal HUP INT TERM'|\
+        "trap 'handle_signal HUP' HUP"|"trap 'handle_signal INT' INT"|"trap 'handle_signal TERM' TERM"|'trap - EXIT'|\
+        'trap omega_early_signal HUP INT TERM'|'trap omega_early_exit EXIT') ;;
+        *) _omega_guard_reject trap-mutation ;;
+      esac
+      _omega_guard_log ALLOW signal-trap "$command"
+      return ;;
+    command)
+      [[ "$command" == 'command -v '* ]] || _omega_guard_reject command-dispatch
+      _omega_guard_log ALLOW command-query "$command"
+      return ;;
+    type)
+      _omega_guard_production_source "$source" &&
+        { [ "$command" = 'type -t -- "$1" 2> /dev/null' ] || [ "$command" = 'type -P -- "$1" 2> /dev/null' ]; } ||
+        _omega_guard_reject type-query
+      _omega_guard_log ALLOW command-type-query "$command"
+      return ;;
+    exec)
+      case "$command" in
+        'exec {config_fd}< "$OMEGA_CONFIG_FILE"'|'exec {config_fd}<&-'|'exec {config_fd}>&-'|\
+        'exec {TELEMETRY_FD}< "$EVE"'|'exec {TELEMETRY_FD}<&-'|'exec {TELEMETRY_FD}>&-'|\
+        'exec {RESULT_FD}>&1'|'exec {RESULT_FD}>&- 2> /dev/null'|'exec {ERROR_FD}>&2'|'exec {ERROR_FD}>&-'|\
+        'exec {REPORT_FD}<&-'|'exec {REPORT_FD}>&-'|'exec {REPORT_FD}<&- 2> /dev/null'|'exec {REPORT_FD}>&- 2> /dev/null'|\
+        'exec {COPY_FD}<&-'|'exec {COPY_FD}>&-'|'exec {COPY_FD}<&- 2> /dev/null'|'exec {COPY_FD}>&- 2> /dev/null'|\
+        'exec {STAGE_FD}<&-'|'exec {STAGE_FD}>&-'|'exec {STAGE_FD}<&- 2> /dev/null'|'exec {STAGE_FD}>&- 2> /dev/null'|\
+        'exec {REPORT_FD}< "$TMP_REPORT"'|'exec {COPY_FD}< "$TMP_REPORT"'|\
+        'exec {COPY_FD}< "$PUBLISHED_FILE"'|'exec {STAGE_FD}>> "$PUBLISH_STAGE"') ;;
+        *)
+          if _omega_guard_stub_source "$source"; then
+            case "$command" in
+              'exec "$OMEGA_STUB_BIN/jq" "$@"'|'exec "$OMEGA_STUB_BIN/docker" ps'|\
+              'exec "${OMEGA_REAL_AWK:?}" "$@"'|'exec "${OMEGA_REAL_CUT:?}" "$@"'|\
+              'exec "${OMEGA_REAL_GREP:?}" "$@"'|'exec "${OMEGA_REAL_SED:?}" "$@"'|\
+              'exec "${OMEGA_REAL_SORT:?}" "$@"'|'exec "${OMEGA_REAL_TAIL:?}" "$@"'|\
+              'exec "${OMEGA_REAL_UNIQ:?}" "$@"'|'exec "${OMEGA_REAL_JQ:?}" "${mapped_args[@]}"'|\
+              'exec "${OMEGA_REAL_MKDIR:?}" "$@"'|'exec "${OMEGA_REAL_MKTEMP:?}" "$@"'|\
+              'exec "${OMEGA_REAL_MV:?}" "$@"'|'exec "${OMEGA_REAL_RM:?}" "$@"'|\
+              'exec "${OMEGA_REAL_STAT:?}" "$@"') ;;
+              *) _omega_guard_reject stub-exec-dispatch ;;
+            esac
+          else
+            _omega_guard_reject exec-dispatch
+          fi
+          ;;
+      esac
+      _omega_guard_log ALLOW fd-or-stub-exec "$command"
+      return ;;
+    builtin)
+      if _omega_guard_production_source "$source" && [[ "$command" == 'builtin printf '* ]]; then
+        _omega_guard_log ALLOW production-builtin-printf "$command"
+        return
+      fi
+      _omega_guard_reject shell-dispatch ;;
+    enable|eval|source|.|unset|readonly|declare|typeset|shopt)
+      _omega_guard_reject shell-dispatch ;;
+    export)
+      { [ "$command" = 'export LC_ALL' ] || [ "$command" = 'export PATH' ]; } || _omega_guard_reject export-mutation
+      _omega_guard_log ALLOW locale-export "$command"
+      return ;;
+    umask)
+      [ "$command" = 'umask 077' ] || _omega_guard_reject umask-mutation
+      _omega_guard_log ALLOW umask "$command"
+      return ;;
+    kill)
+      _omega_guard_stub_source "$source" && [ "$command" = 'kill -"$signal" "$PPID"' ] || _omega_guard_reject kill-dispatch
+      _omega_guard_log ALLOW signal-test "$command"
+      return ;;
+    echo|printf|read|local|return|exit|true|false|:|continue|break|'[')
+      _omega_guard_log ALLOW safe-builtin "$command"
+      return ;;
+    case|for|while|until|'[[')
+      _omega_guard_log ALLOW safe-keyword "$command"
+      return ;;
+    '((')
+      _omega_guard_log ALLOW arithmetic-syntax "$command"
+      return ;;
+    bash|sh|dash|/bin/bash|/bin/sh|/usr/bin/bash|/usr/bin/dash)
+      _omega_guard_reject shell-reentry ;;
+  esac
+
+  if _omega_guard_production_source "$source"; then
+    case "$first" in
+      /usr/bin/stat)
+        [[ "$command" == /usr/bin/stat\ -c* ]] || _omega_guard_reject absolute-stat-dispatch
+        _omega_guard_log ALLOW trusted-bootstrap-stat "$command"
+        return ;;
+      /usr/bin/readlink)
+        [[ "$command" == '/usr/bin/readlink -- '* ]] || _omega_guard_reject absolute-readlink-dispatch
+        _omega_guard_log ALLOW trusted-bootstrap-readlink "$command"
+        return ;;
+    esac
+    case "$first" in
+      load_omega_config|open_telemetry|telemetry_path_unchanged|close_telemetry_fd|promote_result|result_name|\
+      emit_result_marker|finish_result|finish_without_report|cleanup_workspace|cleanup_publish_stage|close_report_fd|\
+      close_display_fd|close_copy_fd|close_stage_fd|omega_early_result_name|omega_early_promote|omega_early_signal|omega_early_exit|\
+      omega_bootstrap_child_ready|single_line|safe_absolute_path|valid_home_path|safe_temporary_base|safe_directory_tree|\
+      private_directory_identity|private_file_identity|private_file_descriptor_identity|temporary_base_unchanged|home_unchanged|\
+      output_directory_unchanged|workspace_unchanged|report_temp_file_unchanged|publish_stage_unchanged|published_report_unchanged|\
+      build_failure_evidence_stage|redesignate_interrupted_publication|remove_interrupted_publication|\
+      reconcile_pending_signal|valid_tailscale_ipv4|trusted_directory_tree|\
+      trusted_executable_path|resolve_trusted_command|validate_omega_command|\
+      get_tailscale_ipv4|parse_aggregate|aggregate_telemetry|normalize_telemetry|check_service|check_cmd|check_file|\
+      check_url|publish_report|append_report|cleanup|handle_signal)
+        _omega_guard_log ALLOW production-function "$command"
+        return ;;
+    esac
+  fi
+
+  if _omega_guard_production_source "$source" && _omega_guard_variable_command "$first"; then
+    _omega_guard_log ALLOW identity-checked-variable-stub "$command"
+    return
+  fi
+
+  if _omega_guard_stub_source "$source"; then
+    case "$first" in
+      log_invocation|reject_invocation|require_absolute_home)
+        _omega_guard_log ALLOW stub-function "$command"
+        return ;;
+    esac
+    case "$command" in
+      '"${OMEGA_REAL_MV:?}" "$@"'|'"${OMEGA_REAL_JQ:?}" "${mapped_args[@]}"'|\
+      '"${OMEGA_REAL_RM:?}" -f -- "$OMEGA_STUB_BIN/jq"'|\
+      '"${OMEGA_REAL_LN:?}" -s -- "${OMEGA_STUB_SWAP_TARGET:?}" "$OMEGA_STUB_BIN/jq"'|\
+      '"${OMEGA_REAL_MKDIR:?}" -- "$hostile_workspace"'|\
+      '"${OMEGA_REAL_MV:?}" -f -- "$4.omega-test-replacement" "$4"'|\
+      '"${OMEGA_REAL_CP:?}" -- "$OMEGA_STUB_ROTATE_FILE" "$OMEGA_STUB_EVE_TARGET.omega-test-new"'|\
+      '"${OMEGA_REAL_MV:?}" -f -- "$OMEGA_STUB_EVE_TARGET.omega-test-new" "$OMEGA_STUB_EVE_TARGET"'|\
+      '"${OMEGA_REAL_RM:?}" -f -- "$OMEGA_STUB_EVE_TARGET"'|\
+      '"${OMEGA_REAL_CHMOD:?}" 0700 -- "$stat_target"'|\
+      '"${OMEGA_REAL_CHMOD:?}" 0600 -- "$stat_target"'|\
+      '"${OMEGA_REAL_MV:?}" -- "$stat_target" "$stat_target.omega-test-replaced"'|\
+      '"${OMEGA_REAL_MKDIR:?}" -- "$stat_target"'|\
+      '"${OMEGA_REAL_CP:?}" -- "$OMEGA_STUB_CONFIG_REPLACEMENT" "$OMEGA_CONFIG_FILE.omega-test-new"'|\
+      '"${OMEGA_REAL_MV:?}" -f -- "$OMEGA_CONFIG_FILE.omega-test-new" "$OMEGA_CONFIG_FILE"'|\
+      '"${OMEGA_REAL_STAT:?}" "$@"')
+        _omega_guard_log ALLOW stub-real-tool "$command"
+        return ;;
+    esac
+  fi
+
+  if _omega_guard_stub_command "$first"; then
+    _omega_guard_log ALLOW identity-checked-stub "$command"
+    return
+  fi
+
+  [ "$(type -t -- "$first" 2>/dev/null)" != function ] || _omega_guard_reject function-dispatch
+
+  _omega_guard_reject unapproved-dispatch
+}
+
+: "${PATH:?}" "${BASH_ENV:?}" "${OMEGA_TRUSTED_PATH:?}" "${OMEGA_STUB_BIN:?}" "${OMEGA_STUB_SOURCE:?}" \
+  "${OMEGA_REPO_ROOT:?}" "${OMEGA_EXEC_LOG:?}" "${OMEGA_STUB_LOG:?}"
+: "${OMEGA_STUB_RM_SOURCE:=$OMEGA_STUB_SOURCE}"
+_OMEGA_STARTUP_SIGNAL_SENT=false
+_OMEGA_FINAL_SIGNAL_SENT=false
+readonly BASH_ENV HOME TMPDIR OMEGA_TRUSTED_PATH OMEGA_STUB_BIN OMEGA_STUB_SOURCE OMEGA_STUB_RM_SOURCE OMEGA_REPO_ROOT OMEGA_EXEC_LOG OMEGA_STUB_LOG
+readonly OMEGA_TEST_PRODUCTION_SOURCE OMEGA_TEST_STARTUP_SIGNAL OMEGA_TEST_FINAL_SIGNAL_STAGE OMEGA_TEST_FINAL_SIGNAL
+readonly OMEGA_REAL_AWK OMEGA_REAL_CUT OMEGA_REAL_GREP OMEGA_REAL_SED OMEGA_REAL_SORT OMEGA_REAL_TAIL OMEGA_REAL_UNIQ
+readonly OMEGA_REAL_JQ OMEGA_REAL_CP OMEGA_REAL_MKDIR OMEGA_REAL_MKTEMP OMEGA_REAL_MV OMEGA_REAL_RM OMEGA_REAL_STAT OMEGA_REAL_LN OMEGA_REAL_CHMOD
+readonly OMEGA_STUB_SYSTEMCTL_MODE OMEGA_STUB_INACTIVE_UNIT OMEGA_STUB_CURL_MODE OMEGA_STUB_SUDO_MODE OMEGA_STUB_STAT_MODE
+readonly OMEGA_STUB_EVE_TARGET OMEGA_STUB_STATE_DIR OMEGA_STUB_ROTATE_FILE OMEGA_STUB_CONFIG_REPLACEMENT OMEGA_STUB_JQ_MODE
+readonly OMEGA_STUB_SIGNAL OMEGA_STUB_AGGREGATION_MODE OMEGA_STUB_APPEND_FILE OMEGA_STUB_APPEND_TEXT OMEGA_STUB_DOCKER_MODE
+readonly OMEGA_STUB_HOSTNAME_MODE OMEGA_STUB_IP_MODE OMEGA_STUB_UPTIME_MODE OMEGA_STUB_DF_MODE OMEGA_STUB_FREE_MODE
+readonly OMEGA_STUB_MKDIR_MODE OMEGA_STUB_MKTEMP_MODE OMEGA_STUB_MV_MODE OMEGA_STUB_RM_MODE OMEGA_STUB_SED_MODE
+readonly OMEGA_STUB_SWAP_TARGET
+readonly OMEGA_STUB_STAT_TARGET OMEGA_STUB_STAT_TARGET_KIND OMEGA_STUB_STAT_REPLACE_AT
+readonly OMEGA_STUB_RM_ONESHOT_STATE OMEGA_STUB_MENU_EXIT
+readonly -f _omega_guard_log _omega_guard_reject _omega_guard_assignment_only _omega_guard_stub_source
+readonly -f _omega_guard_production_source _omega_guard_stub_command _omega_guard_variable_command
+readonly -f _omega_guard_sigint_catchable _omega_security_guard
+builtin printf 'START\t%s\t%s\n' "$BASHPID" "$BASH_SOURCE" >> "$OMEGA_EXEC_LOG" || exit 125
+set -o functrace
+trap _omega_security_guard DEBUG
