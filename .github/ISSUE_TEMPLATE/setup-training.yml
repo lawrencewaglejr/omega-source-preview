@@ -1,0 +1,41 @@
+name: Setup or training inquiry
+description: Discuss a development/lab walkthrough or a scoped training request.
+title: "[Setup/training] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Contact: Lawrence Wagle Jr — Founder & Security Architect.
+        OMEGA is an experimental source preview. An inquiry does not book a service.
+        This issue is public: use fictional examples; do not share credentials, logs, reports, captures, private hostnames/addresses, or customer information.
+  - type: dropdown
+    id: assistance
+    attributes:
+      label: What would you like to discuss?
+      options:
+        - Fictional demo walkthrough
+        - Development or disposable-lab setup
+        - Operator training on evidence and reports
+        - A scoped integration or documentation task
+        - Exploring a future offering
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the result you want, using information suitable for a public issue.
+      placeholder: "Example: Help me understand the demo and plan a disposable Linux lab."
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Broad platform and versions
+      description: Operating system, architecture and relevant software versions only; no hostnames or addresses.
+      placeholder: "Example: Linux x86_64 workstation; considering Raspberry Pi 5."
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and questions
+      description: State any scope boundaries or questions. Feasibility, availability and any fee must be agreed before work is accepted.

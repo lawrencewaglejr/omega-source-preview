@@ -1,0 +1,37 @@
+name: Early-user feedback
+description: Share what is useful or unclear in the fictional demo and source preview.
+title: "[Feedback] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping shape OMEGA. You can give feedback using fictional demo data only.
+        This issue is public. Do not include credentials, operational logs, reports, captures, private hostnames/addresses, or customer information.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would you like OMEGA to help with?
+      description: Describe the general workflow or question, without private network details.
+    validations:
+      required: true
+  - type: textarea
+    id: demo
+    attributes:
+      label: What worked or was unclear in the demo?
+    validations:
+      required: true
+  - type: dropdown
+    id: interest
+    attributes:
+      label: What would you consider trying next?
+      options:
+        - Run the fictional demo myself
+        - Try the source in a disposable lab
+        - Discuss setup or operator training
+        - Follow development toward validated hardware
+        - Share feedback only
+  - type: textarea
+    id: confidence
+    attributes:
+      label: What would help you decide?
+      description: Useful documentation, validation evidence, a missing feature, or a setup/training task that would save you time. This does not place an order or commit you to payment.
