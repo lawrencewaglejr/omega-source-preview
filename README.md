@@ -6,7 +6,7 @@ A local network-security appliance project that brings network detections,
 endpoint events, DNS observations, device context, and local AI explanations
 into one dashboard.
 
-**Security Architect: Lawrence Wagle Jr**
+**Founder & Security Architect: Lawrence Wagle Jr**
 
 **Version: 0.1.0-preview.1 · Experimental source preview**
 
@@ -300,7 +300,7 @@ or software test pass does not establish appliance acceptance or network safety.
 
 ## Architecture and attribution
 
-**Security Architect: Lawrence Wagle Jr**
+**Founder & Security Architect: Lawrence Wagle Jr**
 
 OMEGA's project source code and documentation are licensed under the
 **Apache License, Version 2.0**, unless otherwise noted.
