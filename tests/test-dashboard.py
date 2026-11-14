@@ -27,6 +27,110 @@ class DashboardTests(unittest.TestCase):
     def tearDown(self):
         self.directory.cleanup()
 
+    def test_backlog_collection_takes_priority_over_background_correlation(self):
+        for caught_up in (False, True):
+            with self.subTest(caught_up=caught_up):
+                app = dashboard.Application.__new__(dashboard.Application)
+                stopped, threads, calls = [False], [], []
+                app.discovery_stop = types.SimpleNamespace(is_set=lambda: stopped[0], wait=lambda _: stopped.__setitem__(0, True))
+                app.discovery = types.SimpleNamespace(poll=lambda: None)
+                app.telemetry_snapshot = {}
+                app.analysis_updated, app.analysis_worker = 0, None
+                app.telemetry_store = types.SimpleNamespace(
+                    path=self.root/'telemetry.sqlite3',
+                    poll=lambda **_: calls.append('poll') or {'caught_up': caught_up},
+                    snapshot=lambda: calls.append('snapshot') or {'events': 1},
+                )
+                def thread(*, target, daemon, name):
+                    result = types.SimpleNamespace(target=target, start=lambda: None, is_alive=lambda: False)
+                    threads.append((name, result))
+                    return result
+                with patch.object(dashboard.threading, 'Thread', side_effect=thread), patch.object(dashboard.shutil, 'disk_usage', return_value=types.SimpleNamespace(free=10*1024**3)):
+                    app.start_discovery()
+                    next(worker for name, worker in threads if name == 'omega-telemetry').target()
+                self.assertEqual(calls, ['poll', 'snapshot'])
+                self.assertEqual(any(name == 'omega-correlation' for name, _ in threads), caught_up)
+
+    def test_background_reader_closes_on_analysis_failure(self):
+        app = dashboard.Application.__new__(dashboard.Application)
+        app.discovery_stop = threading.Event()
+        app.reports = types.SimpleNamespace(busy=lambda: False)
+        app.telemetry_snapshot = {"coverage": {}, "sources": []}
+        closed = []
+        def rows():
+            try:
+                yield {"id": "fixture"}
+            finally:
+                closed.append(True)
+        reader = rows()  # Retain a reference: cleanup must not rely on GC.
+        app.telemetry_store = types.SimpleNamespace(iter_events=lambda: reader)
+        app.discovery = types.SimpleNamespace(snapshot=lambda: {"devices": []})
+        def fail(events, **kwargs):
+            next(events)
+            raise ValueError("analysis failed")
+        with patch.object(dashboard, "analyze_events", side_effect=fail):
+            app.refresh_analysis()
+        self.assertEqual(closed, [True])
+        self.assertGreater(app.analysis_updated, 0)
+
+    def test_background_skips_reader_when_stopping_or_report_pending(self):
+        for stopping in (False, True):
+            app = dashboard.Application.__new__(dashboard.Application)
+            app.discovery_stop = threading.Event()
+            if stopping:
+                app.discovery_stop.set()
+            app.reports = types.SimpleNamespace(busy=lambda: not stopping)
+            opened = []
+            app.telemetry_store = types.SimpleNamespace(iter_events=lambda: opened.append(True))
+            app.refresh_analysis()
+            self.assertGreater(app.analysis_updated, 0)
+            self.assertEqual(opened, [])
+
+    def test_background_reader_releases_real_wal_snapshot_on_each_exit(self):
+        for reason in ('failure', 'report', 'shutdown', 'success'):
+            with self.subTest(reason=reason):
+                root = self.root / reason
+                root.mkdir(mode=0o700)
+                eve = root / 'eve.json'
+                stamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                eve.write_text(''.join(json.dumps({'timestamp': stamp, 'event_type': 'dns', 'flow_id': n}) + '\n' for n in range(1200)))
+                store = dashboard.TelemetryStore(root / 'telemetry.sqlite3', eve_path=eve)
+                self.addCleanup(store.close)
+                store.db.execute('PRAGMA wal_autocheckpoint=0')
+                store.db.execute('PRAGMA busy_timeout=1')
+                self.assertEqual(store.poll()['events'], 1200)
+                reader = store.iter_events()  # Hold this reference across refresh_analysis.
+                app = dashboard.Application.__new__(dashboard.Application)
+                app.discovery_stop = threading.Event()
+                busy, published, checkpoints = [False], [], []
+                app.reports = types.SimpleNamespace(busy=lambda: busy[0])
+                app.telemetry_snapshot = {'coverage': {}, 'sources': []}
+                app.telemetry_store = types.SimpleNamespace(iter_events=lambda: reader)
+                app.discovery = types.SimpleNamespace(snapshot=lambda: {'devices': []})
+                app.publish_analysis = published.append
+                def analyze(events, **kwargs):
+                    next(events)
+                    with store.db:
+                        store.db.execute("INSERT INTO metadata(name,value) VALUES ('fixture-write','committed')")
+                    checkpoints.append(store.db.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()[0])
+                    if reason == 'failure':
+                        raise ValueError('synthetic analysis failure')
+                    if reason == 'report':
+                        busy[0] = True
+                    if reason == 'shutdown':
+                        app.discovery_stop.set()
+                    list(events)
+                    return {'fixture': True}
+                try:
+                    with patch.object(dashboard, 'analyze_events', side_effect=analyze):
+                        app.refresh_analysis()
+                    self.assertEqual(checkpoints, [1], 'fixture reader must actually block a checkpoint')
+                    self.assertEqual(store.db.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()[0], 0)
+                    self.assertEqual(len(list(store.iter_original_events())), 1200)
+                    self.assertEqual(len(published), int(reason == 'success'))
+                finally:
+                    reader.close()
+
     def test_service_health_distinguishes_external_listener_from_application_health(self):
         def systemctl(args, **kwargs):
             self.assertEqual(args[:2], ['/usr/bin/systemctl', 'show'])

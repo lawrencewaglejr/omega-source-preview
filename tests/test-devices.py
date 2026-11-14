@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sqlite3
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -37,6 +38,46 @@ class DeviceDiscoveryTests(unittest.TestCase):
 
     def service(self, mapping=False):
         return devices.DeviceDiscovery(self.leases, self.state, self.mapping if mapping else None)
+
+    def test_dashboard_snapshot_does_not_wait_for_uncommitted_device_write(self):
+        self.source()
+        service = self.service()
+        saved = service.poll()
+        self.source([(MAC_A, '192.168.50.12', 'work-laptop'), (MAC_B, '192.168.50.24', 'example-tablet')])
+        writing, release, returned = threading.Event(), threading.Event(), threading.Event()
+        snapshots = []
+        save = service._save
+        def delayed_save(state):
+            writing.set()
+            if not release.wait(5):
+                raise OSError('test write timed out')
+            save(state)
+        def read():
+            snapshots.append(service.snapshot())
+            returned.set()
+        with patch.object(service, '_save', side_effect=delayed_save):
+            writer = threading.Thread(target=service.poll)
+            writer.start()
+            try:
+                self.assertTrue(writing.wait(2))
+                reader = threading.Thread(target=read)
+                reader.start()
+                self.assertTrue(returned.wait(1), 'Snapshot blocked behind a device-state write')
+                self.assertTrue(snapshots[0]['refreshing'])
+                self.assertEqual(snapshots[0]['devices'], saved['devices'])
+                self.assertEqual(snapshots[0]['events'], [])
+                # A reader cannot mutate the published view for another request.
+                snapshots[0]['devices'].clear()
+                self.assertEqual(len(service.snapshot()['devices']), 1)
+            finally:
+                release.set()
+                writer.join(3)
+                if 'reader' in locals():
+                    reader.join(3)
+        current = service.snapshot()
+        self.assertFalse(current['refreshing'])
+        self.assertEqual(len(current['devices']), 2)
+        self.assertEqual(current['unread_count'], 1)
 
     def test_silent_baseline_then_one_persistent_event(self):
         self.source()

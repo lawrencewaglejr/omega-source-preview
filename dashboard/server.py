@@ -20,6 +20,7 @@ import subprocess
 import threading
 import time
 from http.client import HTTPException
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib import request
 
@@ -184,7 +185,7 @@ class Application:
                         if time.monotonic()-refreshed > 10:
                             self.telemetry_snapshot = self.telemetry_store.snapshot()
                             refreshed = time.monotonic()
-                        if time.monotonic()-self.analysis_updated > 300 and (not self.analysis_worker or not self.analysis_worker.is_alive()):
+                        if progress.get("caught_up") and time.monotonic()-self.analysis_updated > 300 and (not self.analysis_worker or not self.analysis_worker.is_alive()):
                             self.analysis_worker = threading.Thread(target=self.refresh_analysis,daemon=True,name="omega-correlation")
                             self.analysis_worker.start()
                     except Exception:
@@ -204,14 +205,22 @@ class Application:
 
     def refresh_analysis(self):
         try:
-            def events():
-                for index, event in enumerate(self.telemetry_store.iter_events()):
-                    if index % 1000 == 0 and self.reports.busy():
-                        raise RuntimeError("An explicit report takes priority over background correlation")
+            if self.discovery_stop.is_set() or self.reports.busy():
+                return
+            def events(reader):
+                for index, event in enumerate(reader):
+                    if index % 1000 == 0:
+                        if self.discovery_stop.is_set() or self.reports.busy():
+                            raise RuntimeError("Background correlation yielded to shutdown or a report")
                     yield event
             view = copy.deepcopy(self.telemetry_snapshot)
-            self.publish_analysis(analyze_events(events(), coverage=view["coverage"], sources=view["sources"], known_ips=[address for d in self.discovery.snapshot()["devices"] for address in d.get("addresses",[d["ip"]])]))
+            with closing(self.telemetry_store.iter_events()) as reader:
+                analysis = analyze_events(events(reader), coverage=view["coverage"], sources=view["sources"], known_ips=[address for d in self.discovery.snapshot()["devices"] for address in d.get("addresses",[d["ip"]])])
+            if not self.discovery_stop.is_set():
+                self.publish_analysis(analysis)
         except Exception:
+            pass
+        finally:
             self.analysis_updated = time.monotonic()
 
     def close(self):

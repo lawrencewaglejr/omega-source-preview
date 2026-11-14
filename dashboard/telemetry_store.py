@@ -56,6 +56,18 @@ def _date(value):
         return None
 
 
+def _pihole_text(value):
+    """Keep undecodable SQLite text bytes in an explicit lossless representation.
+
+    The query result remains JSON-serializable, while normalizers leave this
+    structured value out of textual indicators. The original source is read-only.
+    """
+    try:
+        return value.decode("utf-8")
+    except UnicodeDecodeError:
+        return {"_omega_sqlite_text_hex": value.hex()}
+
+
 def _now():
     return dt.datetime.now(UTC).isoformat()
 
@@ -176,6 +188,10 @@ def normalize(stream, data, event_id):
             if key in vulnerability:
                 details["vulnerability_" + key] = _text(vulnerability[key], 350)
     elif stream == "pihole":
+        binary_fields = sorted(key for key, value in data.items()
+                               if isinstance(value, dict) and set(value) == {"_omega_sqlite_text_hex"})
+        if binary_fields:
+            details["binary_text_fields"] = binary_fields
         event.update(event_type="dns", title="Pi-hole DNS query", source_ip=_ip(data.get("client")),
                      hostname=_text(data.get("hostname"), 253), domain=_text(data.get("domain"), 253),
                      action=_text(data.get("status"), 80), category="DNS activity")
@@ -265,6 +281,7 @@ class TelemetryStore:
             saved_start = self.db.execute("SELECT value FROM metadata WHERE name='collection_started'").fetchone()
         self.collection_started = saved_start[0] if saved_start else None
         self.db.commit()
+        self.release_completed_archives()
 
     def close(self):
         with self.lock:
@@ -336,7 +353,7 @@ class TelemetryStore:
     def _save_cursor(self, cursor):
         self.db.execute("INSERT OR REPLACE INTO cursors(stream,identity,generation,offset,pending,dropping,anchor) VALUES (:stream,:identity,:generation,:offset,:pending,:dropping,:anchor)", cursor)
 
-    def _log_files(self, path, stream=None):
+    def _log_files(self, path, stream=None, include_consumed=False):
         path = Path(os.path.abspath(path))
         directory = _directory(path.parent)
         files, compressed, unsafe = [], 0, 0
@@ -365,6 +382,8 @@ class TelemetryStore:
                     continue
                 if self.collection_started and name.endswith('.gz') and self.db.execute("SELECT 1 FROM metadata WHERE name=?",(f'ignore:{stream}:{info.st_dev}:{info.st_ino}:{info.st_size}:{info.st_mtime_ns}',)).fetchone():
                     continue
+                if not include_consumed and name.endswith('.gz') and self.db.execute("SELECT 1 FROM metadata WHERE name=?", (self._archive_marker(stream, info),)).fetchone():
+                    continue
                 if name.endswith((".bz2", ".xz", ".zip", ".zst")):
                     compressed += 1
                     continue
@@ -372,6 +391,73 @@ class TelemetryStore:
         finally:
             os.close(directory)
         return sorted(files), compressed, unsafe
+
+    @staticmethod
+    def _archive_marker(stream, info):
+        return f'consumed_archive:{stream}:{info.st_dev}:{info.st_ino}:{info.st_size}:{info.st_mtime_ns}'
+
+    def release_completed_archives(self):
+        """Release expanded copies only after their committed cursor reaches EOF.
+
+        Keep the original gzip and every retained event. A durable marker for
+        the exact source version prevents re-expansion/re-import after restart.
+        Mark before unlinking, so interrupted cleanup can safely retry.
+        """
+        folder = self.path.parent / 'archive-cache'
+        if not folder.exists():
+            return 0
+        directory = _directory(folder, private=True)
+        released = 0
+        try:
+            for stream, source in self.sources.items():
+                if not source or stream == 'pihole':
+                    continue
+                try:
+                    files, _, _ = self._log_files(source, stream, include_consumed=True)
+                except OSError:
+                    continue
+                for _, _, original in files:
+                    if not original.name.endswith('.gz'):
+                        continue
+                    try:
+                        descriptor, info = _regular(original)
+                        os.close(descriptor)
+                        identity = hashlib.sha256(f'{info.st_dev}:{info.st_ino}:{info.st_size}:{info.st_mtime_ns}'.encode()).hexdigest()
+                        if identity in self.gzip_readers:
+                            continue
+                        marker = self._archive_marker(stream, info)
+                        recorded = self.db.execute('SELECT 1 FROM metadata WHERE name=?', (marker,)).fetchone()
+                        target, complete = folder / (identity+'.json'), folder / (identity+'.done')
+                        if not recorded:
+                            descriptor, _ = _regular(complete, private=True)
+                            os.close(descriptor)
+                            descriptor, cached = _regular(target, private=True)
+                            try:
+                                cursor = self._cursor(stream, f'{cached.st_dev}:{cached.st_ino}')
+                                if cursor['offset'] != cached.st_size or cursor['pending'] or cursor['dropping'] or cursor['anchor'] != os.pread(descriptor, min(64, cached.st_size), 0):
+                                    continue
+                            finally:
+                                os.close(descriptor)
+                            # The source must still be the same immutable version.
+                            if original.stat() != info:
+                                continue
+                            with self.db:
+                                self.db.execute('INSERT OR IGNORE INTO metadata(name,value) VALUES (?,?)', (marker, _now()))
+                        for cached_path in (target, complete):
+                            try:
+                                descriptor, cached = _regular(cached_path, private=True)
+                                os.close(descriptor)
+                                cached_path.unlink()
+                                released += cached.st_blocks * 512
+                            except FileNotFoundError:
+                                pass
+                    except OSError:
+                        continue
+            if released:
+                os.fsync(directory)
+        finally:
+            os.close(directory)
+        return released
 
     def _baseline_stream(self, stream, path):
         """Skip pre-existing bytes/rows once, then retain all subsequent cursors."""
@@ -511,6 +597,7 @@ class TelemetryStore:
         if not files:
             raise ValueError("No readable uncompressed telemetry files are available")
         used, backlog, pending_records, gzip_pending = 0, 0, 0, 0
+        permission_unread = 0
         # Keep current detections visible while importing older history.
         if budget >= READ_CHUNK:
             for _, _, candidate in files:
@@ -528,6 +615,10 @@ class TelemetryStore:
                     continue
                 try:
                     candidate, complete = self._expand_gzip(candidate, budget - used)
+                except PermissionError:
+                    permission_unread += 1
+                    gzip_pending += 1
+                    continue
                 except (OSError, EOFError):
                     compressed += 1
                     gzip_pending += 1
@@ -537,7 +628,7 @@ class TelemetryStore:
             used += read; backlog += remaining; pending_records += partial
         return {"backlog_bytes": backlog, "backlog_rows": 0, "caught_up": backlog == 0 and gzip_pending == 0 and compressed == 0 and unsafe == 0,
                 "pending_records": pending_records, "rotated_files": max(0, len(files) - 1),
-                "compressed_files_unread": compressed, "gzip_archives_pending": gzip_pending, "unsafe_files_unread": unsafe}, used
+                "compressed_files_unread": compressed, "permission_files_unread": permission_unread, "gzip_archives_pending": gzip_pending, "unsafe_files_unread": unsafe}, used
 
     def _pihole_connection(self, path):
         path = Path(os.path.abspath(path))
@@ -555,6 +646,7 @@ class TelemetryStore:
                 raise ValueError("Pi-hole WAL files are not available for a read-only snapshot")
             connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=1)
             connection.row_factory = sqlite3.Row
+            connection.text_factory = _pihole_text
             connection.execute("PRAGMA query_only=ON")
             connection.execute("PRAGMA trusted_schema=OFF")
             deadline = time.monotonic() + 10
@@ -608,7 +700,21 @@ class TelemetryStore:
             clause = " AND q.timestamp>=?" if boundary is not None else ""
             params = (cursor['offset'],boundary,max_rows) if boundary is not None else (cursor['offset'],max_rows)
             query = "SELECT " + ",".join(fields) + " FROM " + table + " AS q " + " ".join(joins) + " WHERE q.id>?"+clause+" ORDER BY q.id LIMIT ?"
-            rows = connection.execute(query, params).fetchall()
+            reader = connection.execute(query, params)
+            rows = []
+            while len(rows) < max_rows:
+                try:
+                    batch = reader.fetchmany(min(100, max_rows - len(rows)))
+                except sqlite3.OperationalError as exc:
+                    # Commit complete fetched batches when the read budget expires.
+                    # A failed fetch may have read more rows: do not advance past
+                    # the last returned row, so those rows are retried next poll.
+                    if getattr(exc, "sqlite_errorcode", None) != sqlite3.SQLITE_INTERRUPT or not rows:
+                        raise
+                    break
+                if not batch:
+                    break
+                rows.extend(batch)
             connection.set_progress_handler(None,0)
             for row in rows:
                 data = dict(row)
@@ -649,8 +755,10 @@ class TelemetryStore:
                             for key, value in counters.items():
                                 self._increment(key,value)
                         health.update(detail, available=True, notice="")
-                        if detail["compressed_files_unread"]:
-                            health["notice"] = "Some archives are corrupt or use an unsupported compression format; their records could not be imported."
+                        if detail.get("permission_files_unread"):
+                            health["notice"] = "Some compressed sources or expansion caches could not be accessed. Check collector read/write permissions."
+                        elif detail["compressed_files_unread"]:
+                            health["notice"] = "Some compressed sources could not be read completely. Check transfer completion, integrity and cache access."
                         elif not detail["caught_up"]:
                             health["notice"] = "Catching up on new events received since collection began." if self.collection_started else "Importing available source history; more records remain."
                     except (OSError, ValueError, sqlite3.Error, OverflowError) as exc:
@@ -660,6 +768,7 @@ class TelemetryStore:
                         self.batch_totals = None
                 with self.db:
                     self.db.execute("INSERT OR REPLACE INTO health(stream,value) VALUES (?,?)", (stream, json.dumps(health)))
+            self.release_completed_archives()
             if include_snapshot or time.monotonic()-self.last_maintenance > 60:
                 with self.db:
                     cutoff = (dt.datetime.now(UTC) - dt.timedelta(days=self.retention_days)).isoformat()

@@ -104,6 +104,11 @@ options such as symlink dereferencing and protected arguments. See the
 [rrsync restriction documentation](https://download.samba.org/pub/rsync/rrsync.1)
 and [OpenSSH authorized key options](https://man.openbsd.org/sshd.8#AUTHORIZED_KEYS_FILE_FORMAT).
 
+These are separately authorized manager-provisioning operations, not source-preview
+installation or a maintenance permission sweep. Inspect exact paths, identities,
+ACL masks and rotation behavior first. Do not run recursive ACL examples to repair
+a small number of already mirrored files; use the narrow verified correction.
+
 Grant traversal on the two ancestors and read access only to the alerts and
 archives trees. These are source permission changes authorized by the manager
 owner; they do not change Wazuh's event policy:

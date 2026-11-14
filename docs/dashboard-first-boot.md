@@ -171,8 +171,9 @@ successful service start is not release acceptance.
    as alerts and provision a durable authenticated log mirror to
    `/var/lib/omega-wazuh-import`. The new `omega-wazuh-mirror.service` supplies this connection using a
    dedicated device key and verified host binding. Configure it through the
-   wizard after granting restricted reader access on the manager. The older
-   `dashboard/wazuh_sync.py` remains a personal deployment example.
+   wizard after granting restricted reader access on the manager. See
+   [the manager connection guide](wazuh-manager-setup.md) for the restricted
+   access contract. The legacy deployment push helper is not distributed.
 4. A mirror must retain complete JSON records and unread rotations, resume after
    interruptions, and publish `sync-status.json` atomically after each attempt.
    The current reader expects an ISO-8601 UTC `checked_at` and a `sources` object

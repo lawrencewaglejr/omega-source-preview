@@ -409,5 +409,25 @@ class ProvisioningTests(unittest.TestCase):
         self.assertEqual(self.calls[-1], ["/usr/bin/systemctl", "stop", P.UNIT])
 
 
+
+
+class CompressedRotationTests(unittest.TestCase):
+    def test_changed_gzip_preserves_prior_generation_and_private_modes(self):
+        import gzip
+        with tempfile.TemporaryDirectory(prefix='omega-gzip-rotation-') as temporary:
+            root = Path(temporary)
+            staged, target = root / 'staged.json.gz', root / 'ossec-alerts-01.json.gz'
+            previous = gzip.compress(b'{"id":"older-fixture"}\n')
+            current = gzip.compress(b'{"id":"newer-fixture"}\n')
+            target.write_bytes(previous); target.chmod(0o640)
+            staged.write_bytes(current); staged.chmod(0o640)
+            M.publish_file(staged, target)
+            self.assertEqual(target.read_bytes(), current)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o640)
+            retained = [path for path in root.iterdir() if path not in (staged, target) and path.is_file()]
+            self.assertTrue(any(path.read_bytes() == previous for path in retained))
+            self.assertEqual(staged.read_bytes(), current)
+
+
 if __name__ == "__main__":
     unittest.main()

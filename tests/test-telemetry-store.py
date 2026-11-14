@@ -9,6 +9,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "dashboard"))
 from telemetry_store import MAX_RECORD_BYTES, TelemetryStore
@@ -27,6 +28,106 @@ def line(event):
 
 
 class TelemetryTests(unittest.TestCase):
+    def test_completed_archive_cache_is_released_without_reimport_or_evidence_loss(self):
+        archive = self.root / 'eve.json.1.gz'
+        with gzip.open(archive, 'wb') as output:
+            output.write(b''.join(line(suricata(flow_id=n)) for n in range(5)))
+        store = self.store()
+        for _ in range(4):
+            result = store.poll()
+        before = list(store.iter_original_events())
+        self.assertEqual(len(before), 5)
+        self.assertFalse(list((self.root/'archive-cache').iterdir()))
+        self.assertTrue(archive.is_file())
+        duplicates = result['sources'][0]['duplicate_records']
+        store.close()
+        resumed = self.store()
+        result = resumed.poll()
+        self.assertEqual(result['events'], 5)
+        self.assertEqual(result['sources'][0]['duplicate_records'], duplicates)
+        self.assertEqual(list(resumed.iter_original_events()), before)
+        self.assertFalse(list((self.root/'archive-cache').iterdir()))
+        # A changed source is a new archive version, not silently skipped.
+        with gzip.open(archive, 'wb') as output:
+            output.write(line(suricata(flow_id=99)))
+        for _ in range(3):
+            result = resumed.poll()
+        self.assertEqual(result['events'], 6)
+
+    def test_archive_cleanup_resumes_after_unlink_failure(self):
+        archive = self.root / 'eve.json.1.gz'
+        with gzip.open(archive, 'wb') as output:
+            output.write(line(suricata(flow_id=1)))
+        store = self.store()
+        with patch.object(store, 'release_completed_archives', return_value=0):
+            store.poll(); store.poll()
+        with patch.object(Path, 'unlink', side_effect=OSError('simulated cleanup failure')):
+            store.release_completed_archives()
+        self.assertTrue(list((self.root/'archive-cache').glob('*.json')))
+        self.assertEqual(store.db.execute("SELECT count(*) FROM metadata WHERE name LIKE 'consumed_archive:%'").fetchone()[0], 1)
+        store.close()
+        resumed = self.store()
+        self.assertFalse(list((self.root/'archive-cache').iterdir()))
+        self.assertEqual(resumed.poll()['events'], 1)
+
+    def test_incomplete_archive_record_and_unread_cache_are_preserved(self):
+        archive = self.root / 'eve.json.1.gz'
+        payload = line(suricata(flow_id=1)) + line(suricata(flow_id=2))[:-1]
+        with gzip.open(archive, 'wb') as output:
+            output.write(payload)
+        store = self.store()
+        store.poll(max_bytes=30)
+        self.assertTrue(list((self.root/'archive-cache').glob('*.json')))
+        for _ in range(5):
+            store.poll()
+        self.assertEqual(store.snapshot()['events'], 1)
+        self.assertTrue(list((self.root/'archive-cache').glob('*.done')))
+        self.assertTrue(list((self.root/'archive-cache').glob('*.json')))
+        self.assertEqual(store.db.execute("SELECT count(*) FROM metadata WHERE name LIKE 'consumed_archive:%'").fetchone()[0], 0)
+
+    def test_archive_permission_failure_is_not_reported_as_corruption(self):
+        archive = self.root / 'eve.json.1.gz'
+        with gzip.open(archive, 'wb') as output:
+            output.write(line(suricata(flow_id=451)))
+        before = archive.read_bytes()
+        store = self.store()
+        with patch.object(store, '_expand_gzip', side_effect=PermissionError('fixture private data must not be disclosed')):
+            result = store.poll()
+        source = result['sources'][0]
+        self.assertTrue(source['available'])
+        self.assertFalse(source['caught_up'])
+        self.assertEqual(source.get('permission_files_unread', 0), 1)
+        self.assertEqual(source['compressed_files_unread'], 0)
+        self.assertIn('permissions', source['notice'])
+        self.assertNotIn('fixture private data', source['notice'])
+        self.assertEqual(result['events'], 0)
+        self.assertFalse((self.root / 'archive-cache').exists())
+        self.assertEqual(archive.read_bytes(), before)
+        for _ in range(3): result = store.poll()
+        self.assertEqual(result['events'], 1)
+        self.assertEqual(result['sources'][0]['permission_files_unread'], 0)
+        self.assertTrue(result['sources'][0]['caught_up'])
+        self.assertEqual(archive.read_bytes(), before)
+
+    def test_incomplete_gzip_transfer_retries_new_version_without_removing_old_cache(self):
+        archive = self.root / 'eve.json.2.gz'
+        complete = gzip.compress(line(suricata(flow_id=452)))
+        archive.write_bytes(complete[:-8])
+        store = self.store()
+        first = store.poll()
+        self.assertEqual(first['sources'][0]['compressed_files_unread'], 1)
+        self.assertEqual(first['sources'][0]['permission_files_unread'], 0)
+        self.assertFalse(first['sources'][0]['caught_up'])
+        old_cache = set((self.root / 'archive-cache').glob('*.json'))
+        self.assertTrue(old_cache)
+        archive.write_bytes(complete)
+        for _ in range(4): result = store.poll()
+        self.assertEqual(result['events'], 1)
+        self.assertTrue(result['sources'][0]['caught_up'])
+        self.assertEqual(archive.read_bytes(), complete)
+        self.assertTrue(all(path.exists() for path in old_cache))
+        self.assertEqual(len(list(store.iter_original_events())), 1)
+
     def test_from_now_skips_old_history_and_resumes_across_restart_rotation(self):
         old=suricata(flow_id=1,timestamp=stamp(-600))
         self.eve.write_bytes(line(old))
@@ -185,7 +286,8 @@ class TelemetryTests(unittest.TestCase):
         snapshot = self.store().poll()
         self.assertEqual(snapshot["events"], 3)
         self.assertEqual(snapshot["sources"][0]["compressed_files_unread"], 1)
-        self.assertIn("corrupt", snapshot["sources"][0]["notice"])
+        self.assertIn("could not be read completely", snapshot["sources"][0]["notice"])
+        self.assertEqual(snapshot["sources"][0].get("permission_files_unread", 0), 0)
 
     def test_copytruncate_restarts_generation(self):
         self.eve.write_bytes(line(suricata(flow_id=123456789)))
@@ -264,6 +366,122 @@ class TelemetryTests(unittest.TestCase):
         db.commit()
         db.close()
         return path
+
+    def test_pihole_read_deadline_commits_returned_batches_without_skipping(self):
+        source = self.make_pihole()
+        now = int(dt.datetime.now(dt.timezone.utc).timestamp())
+        with sqlite3.connect(source) as writer:
+            writer.executemany('INSERT INTO query_storage(timestamp,type,status,domain,client) VALUES(?,1,1,1,1)', [(now,)] * 195)
+        before = source.read_bytes()
+        store = self.store(pihole_database=source)
+        real, info = store._pihole_connection(source)
+        class InterruptedCursor:
+            def __init__(self, cursor): self.cursor, self.calls = cursor, 0
+            def fetchmany(self, size):
+                self.calls += 1
+                if self.calls == 2:
+                    failure = sqlite3.OperationalError('synthetic query deadline')
+                    failure.sqlite_errorcode = sqlite3.SQLITE_INTERRUPT
+                    raise failure
+                return self.cursor.fetchmany(size)
+        class ReadConnection:
+            def execute(self, sql, params=()):
+                cursor = real.execute(sql, params)
+                return InterruptedCursor(cursor) if sql.startswith('SELECT q.id AS query_id') else cursor
+            def set_progress_handler(self, *args): return real.set_progress_handler(*args)
+            def close(self): real.close()
+        with patch.object(store, '_pihole_connection', return_value=(ReadConnection(), info)):
+            result = store.poll()
+        self.assertTrue(result['sources'][3]['available'])
+        self.assertEqual(result['events'], 100)
+        self.assertEqual(result['sources'][3]['backlog_rows'], 100)
+        self.assertEqual(result['sources'][3]['processed_high_water_id'], 100)
+        store.close()
+        resumed = self.store(pihole_database=source)
+        result = resumed.poll()
+        self.assertEqual(result['events'], 200)
+        self.assertTrue(result['sources'][3]['caught_up'])
+        self.assertEqual(len(list(resumed.iter_original_events())), 200)
+        self.assertEqual(result['sources'][3]['duplicate_records'], 0)
+        self.assertEqual(source.read_bytes(), before)
+
+    def test_pihole_other_read_errors_still_fail_closed(self):
+        source = self.make_pihole()
+        store = self.store(pihole_database=source)
+        real, info = store._pihole_connection(source)
+        class FailedCursor:
+            def fetchmany(self, size):
+                failure = sqlite3.OperationalError('synthetic I/O error')
+                failure.sqlite_errorcode = sqlite3.SQLITE_IOERR
+                raise failure
+        class ReadConnection:
+            def execute(self, sql, params=()):
+                return FailedCursor() if sql.startswith('SELECT q.id AS query_id') else real.execute(sql, params)
+            def set_progress_handler(self, *args): return real.set_progress_handler(*args)
+            def close(self): real.close()
+        with patch.object(store, '_pihole_connection', return_value=(ReadConnection(), info)):
+            result = store.poll()
+        self.assertFalse(result['sources'][3]['available'])
+        self.assertEqual(result['events'], 0)
+        self.assertEqual(list(store.iter_original_events()), [])
+        self.assertEqual(store.poll()['events'], 5)
+
+    def test_pihole_invalid_utf8_preserves_bytes_and_does_not_block_new_queries(self):
+        source = self.root / 'legacy-binary-text.db'
+        damaged = b'\xffsynthetic.invalid\x80'
+        now = int(dt.datetime.now(dt.timezone.utc).timestamp())
+        with sqlite3.connect(source) as writer:
+            writer.execute('CREATE TABLE queries(id INTEGER PRIMARY KEY,timestamp INTEGER,type INTEGER,status INTEGER,domain TEXT,client TEXT)')
+            writer.execute("INSERT INTO queries VALUES(1,?,1,1,'before.example','192.168.50.12')", (now,))
+            writer.execute("INSERT INTO queries VALUES(2,?,1,1,CAST(? AS TEXT),'192.168.50.12')", (now, damaged))
+            writer.execute("INSERT INTO queries VALUES(3,?,1,1,'after.example','192.168.50.12')", (now,))
+        before = source.read_bytes()
+        store = self.store(pihole_database=source)
+        result = store.poll(max_rows=10)
+        self.assertTrue(result['sources'][3]['available'])
+        self.assertTrue(result['sources'][3]['caught_up'])
+        self.assertEqual(result['events'], 3)
+        records = {row['record']['query_id']: row['record'] for row in store.iter_original_events()}
+        self.assertEqual(bytes.fromhex(records[2]['domain']['_omega_sqlite_text_hex']), damaged)
+        events = list(store.iter_events())
+        encoded = next(row for row in events if row['details'].get('binary_text_fields'))
+        self.assertEqual(encoded['domain'], '')
+        self.assertEqual(encoded['details']['binary_text_fields'], ['domain'])
+        self.assertEqual(source.read_bytes(), before)
+        store.close()
+        resumed = self.store(pihole_database=source)
+        self.assertEqual(resumed.poll()['events'], 3)
+        with sqlite3.connect(source) as writer:
+            writer.execute("INSERT INTO queries VALUES(4,?,1,1,'fresh.example','192.168.50.12')", (now + 1,))
+        updated = source.read_bytes()
+        self.assertEqual(resumed.poll()['events'], 4)
+        self.assertEqual(source.read_bytes(), updated)
+        self.assertEqual(len(list(resumed.iter_original_events())), 4)
+
+    def test_pihole_invalid_utf8_in_joined_fields_remains_lossless(self):
+        source = self.make_pihole()
+        damaged = b'\xfejoined-fixture\xff'
+        now = int(dt.datetime.now(dt.timezone.utc).timestamp())
+        with sqlite3.connect(source) as writer:
+            writer.execute('INSERT INTO domain_by_id VALUES(2,CAST(? AS TEXT))', (damaged,))
+            writer.execute("INSERT INTO client_by_id VALUES(2,'192.168.50.12',CAST(? AS TEXT))", (damaged,))
+            writer.execute('INSERT INTO forward_by_id VALUES(2,CAST(? AS TEXT))', (damaged,))
+            writer.execute('CREATE TABLE addinfo_by_id(id INTEGER PRIMARY KEY,content TEXT)')
+            writer.execute('INSERT INTO addinfo_by_id VALUES(1,CAST(? AS TEXT))', (damaged,))
+            writer.execute('INSERT INTO query_storage(timestamp,type,status,domain,client,forward,additional_info) VALUES(?,1,2,2,2,2,1)', (now,))
+        before = source.read_bytes()
+        store = self.store(pihole_database=source)
+        result = store.poll()
+        self.assertTrue(result['sources'][3]['available'])
+        self.assertEqual(result['events'], 6)
+        original = next(row['record'] for row in store.iter_original_events() if row['record']['query_id'] == 6)
+        fields = ['additional_info', 'domain', 'forward', 'hostname']
+        for field in fields:
+            self.assertEqual(bytes.fromhex(original[field]['_omega_sqlite_text_hex']), damaged)
+        event = next(row for row in store.iter_events() if row['details'].get('binary_text_fields'))
+        self.assertEqual(event['details']['binary_text_fields'], fields)
+        self.assertEqual(event['source_ip'], '192.168.50.12')
+        self.assertEqual(source.read_bytes(), before)
 
     def test_pihole_real_integer_schema_history_and_restart(self):
         pihole = self.make_pihole()

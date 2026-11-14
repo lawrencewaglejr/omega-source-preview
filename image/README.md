@@ -1,10 +1,19 @@
 # OMEGA Phase 4 master image
 
-This directory contains the reproducible, credential-free OMEGA master-image
+This directory contains experimental source for the OMEGA master-image
 builder for a Raspberry Pi 5 with 8 GB RAM. It targets Raspberry Pi OS Lite
 64-bit on Debian 13 Trixie and produces a sparse 32 GiB SD-card image with a
 512 MiB FAT boot partition and a 31 GiB ext4 root partition. Phase 5 expands
 the filesystem and applies device and site identity.
+
+See [release preparation and acceptance requirements](../docs/release-preparation.md)
+for the CLI/image installation distinction, test isolation, and outstanding gates.
+This document describes the intended build contract, not a completed hardware release.
+
+**The 0.1.0-preview.1 preview is source-only, not an accepted appliance image.**
+Changed application bytes are not yet reconciled with shipping inventories; image
+staging remains blocked until a separately reviewed inventory update and native
+build acceptance. No verification pin has been changed to hide this gate.
 
 ## Current build contract
 
@@ -19,7 +28,7 @@ the filesystem and applies device and site identity.
   reconstructed as a deterministic Docker archive for first-device import.
 - Host-tool sources: exact bdebstrap 0.7.0, genimage 20, and libconfuse 3.3
   archives supplied through the same content-addressed input cache.
-- Dashboard: the ten application files pinned in `locks/dashboard.manifest`,
+- Dashboard: the eleven application files pinned in `locks/dashboard.manifest`,
   including persistent telemetry collection, correlation, and full reports.
 - Offline AI: Ollama 0.33.3 arm64 CPU runtime and `qwen3:1.7b`, pinned in
   `locks/ai.manifest.json`. The upstream runtime archive, license, model
@@ -105,6 +114,11 @@ builder's dependencies, include `newuidmap`, `newgidmap`, and the
 `python3-ruamel.yaml` module and `zstd`, and provide subordinate UID/GID ranges. The full
 construction runs in user and mount namespaces that map those ranges and in a
 network namespace with only loopback and no IPv4 route.
+
+On a supported isolated test host, run the focused tests below. These suites
+create disposable fixtures; do not run them against an appliance installation.
+A scratch source export can run the application and payload tests, but full
+source-trust preflight requires the clean reviewed Git revision.
 
 Run the focused tests with:
 

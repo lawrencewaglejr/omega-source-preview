@@ -389,6 +389,7 @@ class DeviceDiscovery:
             except (OSError, ValueError, TypeError, KeyError, UnicodeError, RecursionError):
                 self._fatal = "Device state is invalid or inaccessible. Discovery is stopped to avoid false notifications; repair the state file before restarting."
                 self._notice = self._fatal
+        self.snapshot()  # Publish an initial view before background polling starts.
 
     def _save(self, state):
         _validate_state(state)
@@ -516,6 +517,28 @@ class DeviceDiscovery:
             return self.snapshot()
 
     def snapshot(self):
+        # A slow read/fsync in poll() must not hold every dashboard request.
+        # Published views contain only previously completed state updates.
+        if not self._lock.acquire(blocking=False):
+            result = copy.deepcopy(self._published_snapshot)
+            result['refreshing'] = True
+            result['notice'] = 'Updating device observations; showing the last saved snapshot. ' + result['notice']
+            now = time.time()
+            for device in result['devices']:
+                age = now - dt.datetime.fromisoformat(device['last_seen']).timestamp()
+                device['recently_observed'] = result['available'] and device['in_current_source'] and 0 <= age <= RECENT_OBSERVATION_SECONDS
+                if device['observation_source'] not in {'pihole_network', 'network_scan'}:
+                    device['lease_active'] = device['observed_in_latest_lease'] and (device['lease_expires'] == 0 or device['lease_expires'] > now)
+            return result
+        try:
+            result = self._snapshot_locked()
+            result['refreshing'] = False
+            self._published_snapshot = copy.deepcopy(result)
+            return result
+        finally:
+            self._lock.release()
+
+    def _snapshot_locked(self):
         with self._lock:
             data = copy.deepcopy(self._state)
             devices = sorted(data["devices"].values(), key=lambda row: (row["display_name"].lower(), row["mac"]))
