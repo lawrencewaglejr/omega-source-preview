@@ -26,6 +26,15 @@ hardware-validated appliance image is not available. The
 [validation report](docs/source-preview-validation.md) describe the tested scope
 and remaining gaps.
 
+## See the preview
+
+![OMEGA security overview using fictional demo data](docs/media/overview.png)
+
+[Watch the 47-second fictional demo](docs/media/omega-demo.mp4?raw=true) ·
+[Browse screenshots and run it locally](docs/demo.md)
+
+The demo does not monitor a live network or run AI inference.
+
 ## Software stack
 
 Versions below describe the repository's pinned appliance inputs or recorded
@@ -297,6 +306,21 @@ or software test pass does not establish appliance acceptance or network safety.
 | [Wazuh-manager setup](docs/wazuh-manager-setup.md) | Restricted reader permissions and SSH connection |
 | [Public-source review](docs/public-release-review.md) | Sanitization policy and source-history boundary |
 | [Third-party notices](docs/third-party-notices.md) | External software and redistribution boundaries |
+
+## Setup, training and early feedback
+
+Interested in a demo walkthrough, lab setup guidance or operator training?
+[Open a setup or training inquiry](docs/setup-and-training.md) through public
+GitHub Issues. Scope, availability and any fee are agreed before work is
+accepted. Share fictional examples only; do not post operational evidence
+or credentials.
+
+We are also seeking early-user feedback before investing in hardware sales.
+[Try the demo and share what would help your workflow](docs/early-user-feedback.md).
+No hardware orders or preorders are being accepted.
+
+GitHub Sponsors enrollment is being prepared. Sponsorship is not yet available;
+no payment or sponsorship benefits are promised by this repository.
 
 ## Architecture and attribution
 
