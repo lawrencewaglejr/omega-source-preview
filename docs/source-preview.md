@@ -99,7 +99,11 @@ Shipping image manifests and verification pins are unchanged. They describe the
 previous image payload and intentionally reject changed application bytes pending
 separate content-inventory review. Do not repin protected content merely to pass a
 check. Source test results are not image acceptance. The root changelog, protected
-README/installer baseline and image locks have not been rewritten.
+installer baseline and image locks have not been rewritten. The expanded project
+README credits Security Architect Lawrence Wagle Jr and describes the source
+preview. It differs from the builder's previously authorized README blob; a
+separate reviewed README authorization is required for image source-trust
+preflight. Existing README verification rules and pins have not been relaxed.
 
 Before eventual publication: verify third-party notices and attribution, review
 every proposed source path and Git object for private information, recheck

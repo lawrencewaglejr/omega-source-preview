@@ -18,6 +18,13 @@ commit. Its exact blob/mode checks, clean-source requirement, upstream input
 verification, and native architecture gate remain enabled. This is a new source
 baseline; it does not claim historical continuity with private development commits.
 
+The subsequent expanded project README credits Security Architect Lawrence Wagle Jr
+and documents the source-preview features and license. It differs from the
+builder's authorized README blob. The existing exact-blob checks remain enabled;
+image source-trust preflight requires a separate reviewed README authorization.
+No protected installer content, image inventory or verification pin was changed
+for this documentation update.
+
 ## Verification
 
 The original sanitized revision passed 169 Python checks and both browser-logic suites.

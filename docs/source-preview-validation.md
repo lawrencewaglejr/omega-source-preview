@@ -1,8 +1,9 @@
 # Source-preview validation — 2026-11-14
 
 Scope: experimental **0.1.0-preview.1**, source-only. The reviewed working tree
-is based on sanitized `main` commit `96ff559`; the preview changes are not yet
-committed. These results do not establish appliance-image acceptance.
+was based on sanitized `main` commit `96ff559` and was subsequently committed as
+`1ea69ef39101a5487426d647e57f76613e1c6920`. These results describe that reviewed
+source-preview candidate and do not establish appliance-image acceptance.
 
 ## PASS
 
@@ -87,3 +88,20 @@ The existing ignore rules are not an exhaustive secret/artifact filter; use the
 reviewed explicit path list and inspect the staged diff during a separately
 authorized Git operation. No staging, commit, remote configuration, push or
 publication is part of this preparation.
+
+## Subsequent README documentation update
+
+The project README was later expanded to describe the included software,
+implemented features, demos, command toolkit, limitations and Apache 2.0 license,
+and to credit **Security Architect Lawrence Wagle Jr**. Associated guides were
+updated to disclose its image source-trust impact. These are documentation
+changes; the application, test source, canonical license and copyright notice
+were not changed. The recorded application pass counts above are not a new
+application test run for the README update.
+
+The new README differs from the exact blob authorized by the image builder.
+The existing README verification pin and rejection rule remain intact. Image
+source-trust preflight therefore requires a separate reviewed README
+authorization; the shipping application-inventory mismatch and all four blocked
+validation checks also remain unresolved. The earlier statement that the root
+README was preserved describes the original validation checkpoint only.

@@ -142,6 +142,13 @@ Git blob, type, and mode. The only approved change to anchored content is the
 README release-policy commit `5179f3595f0b9e1c61417ee76d660fb05c7f102b`,
 whose parent, changed path, and resulting blob are verified exactly.
 
+The current project README has subsequently been expanded for the source preview
+and differs from that authorized blob. Until a separate reviewed authorization
+updates the README identity, image source-trust preflight rejects the new README.
+This documentation update does not change the protected anchor, lock values or
+verification rules. The application-inventory mismatch described above also
+remains a separate gate.
+
 Lock files use strict, versioned schemas (the AI inventory uses JSON). Verification rejects blank
 or malformed lock lines, duplicate or unknown keys, non-ASCII bytes, unsafe
 paths, symbolic links, mutable references, unexpected ownership or modes, and
