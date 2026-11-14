@@ -12,11 +12,13 @@ into one dashboard.
 
 **License: [Apache 2.0](LICENSE) · Copyright 2026 Lawrence Wagle Jr**
 
-OMEGA combines Suricata, Wazuh, and Pi-hole evidence to help an operator
-understand observed activity and decide what to investigate. Its dashboard,
-collector, reporting tools, setup wizard, command-line utilities, and experimental
-Raspberry Pi image builder are included here. External sensors, runtimes, models,
-and operating-system packages are separate dependencies.
+OMEGA combines Suricata, Wazuh, and Pi-hole evidence with EveBox event review,
+Tailscale remote access, and externally configured Fail2ban host protection to
+help an operator understand observed activity and decide what to investigate.
+Its dashboard, collector, reporting tools, setup wizard, command-line utilities,
+and experimental Raspberry Pi image builder are included here. External sensors,
+host-protection services, runtimes, models, and operating-system packages are
+separate dependencies.
 
 This release provides source code and fictional demos. A finished,
 hardware-validated appliance image is not available. The
@@ -36,6 +38,7 @@ validation environment; they are not claims about the latest upstream releases.
 | **Pi-hole** | DNS observations, device observations and separately configured DNS blocking | Appliance container pin: 2026.07.2 |
 | **EveBox** | Additional Suricata event-viewing interface | Appliance container pin: 0.28.0 |
 | **Tailscale** | Separately provisioned remote access | Appliance package pin: 1.102.3 |
+| **Fail2ban** | Host protection against repeated authentication failures | Externally installed and configured; not packaged, pinned or configured by this source preview |
 | **Ollama** | Local inference service for evidence-based explanations | Appliance runtime pin: 0.33.3, ARM64 CPU |
 | **Qwen3** | Local language model served through Ollama | Pinned model: `qwen3:1.7b` |
 | **Docker / containerd** | Container runtime for the pinned Pi-hole and EveBox images | Appliance Docker package pin: 26.1.5; exact dependency versions in build locks |
@@ -305,10 +308,10 @@ OMEGA's project source code and documentation are licensed under the
 **Copyright 2026 Lawrence Wagle Jr.** See [LICENSE](LICENSE) for the complete
 terms and [NOTICE](NOTICE) for project attribution.
 
-Suricata, Wazuh, Pi-hole, EveBox, Tailscale, Ollama, Qwen, Debian, Raspberry Pi
-software and other dependencies remain the work of their respective projects
-under their own licenses and notices. Their names identify integrations and do
-not imply endorsement of OMEGA. See the
+Suricata, Wazuh, Pi-hole, Fail2ban, EveBox, Tailscale, Ollama, Qwen, Debian,
+Raspberry Pi software and other dependencies remain the work of their respective
+projects under their own licenses and notices. Their names identify integrations
+and do not imply endorsement of OMEGA. See the
 [third-party source review](docs/third-party-notices.md).
 
 The software is provided under the license's warranty and liability terms.
