@@ -51,9 +51,9 @@ validation environment; they are not claims about the latest upstream releases.
 | **Ollama** | Local inference service for evidence-based explanations | Appliance runtime pin: 0.33.3, ARM64 CPU |
 | **Qwen3** | Local language model served through Ollama | Pinned model: `qwen3:1.7b` |
 | **Docker / containerd** | Container runtime for the pinned Pi-hole and EveBox images | Appliance Docker package pin: 26.1.5; exact dependency versions in build locks |
-| **Python and SQLite** | HTTP services, persistent telemetry, device state, correlation and reports | Source suites validated with Python 3.14.4; SQLite through the standard library |
+| **Python and SQLite** | HTTP services, persistent telemetry, device state, correlation and reports | Current source suites executed with Python 3.13.5; SQLite through the standard library |
 | **HTML, CSS and JavaScript** | Browser dashboard and guided setup interface | Project browser assets; no bundled npm dependencies |
-| **Node.js** | Browser-logic test runner | Recorded validation: 22.22.1; not required for the Python demo |
+| **Node.js** | Browser-logic test runner | Current validation: 20.19.2; original checkpoint: 22.22.1; not required for the Python demo |
 | **Bash, GNU utilities and jq** | Nine-command operator toolkit and managed command installation | External command-layer prerequisites |
 | **OpenSSH, rsync and ACL tools** | Restricted Wazuh-manager transport and source permissions | External integration prerequisites |
 | **systemd** | Service accounts, lifecycle and appliance service isolation | Appliance integration; services require explicit provisioning and activation |
@@ -209,8 +209,8 @@ Follow the [installation guide](docs/install.md) and
 
 ## Try the fictional demos
 
-Use a Linux development workstation. Python 3.14 is the verified source runtime;
-Python 3.13 is the appliance target but has not passed runtime validation here.
+Use a Linux development workstation. Python 3.13.5 is the verified source runtime
+for the current candidate; the original checkpoint used Python 3.14.4.
 The dashboard and setup demos use the Python standard library and local modules;
 there are no third-party pip packages to install for either demo.
 
@@ -255,20 +255,20 @@ and [release acceptance requirements](docs/release-preparation.md).
 
 ## Validation and known gaps
 
-The recorded source-preview run passed **269 Python checks**, **42 browser
-checks**, **four additional manifest checks**, and isolated demo smoke checks.
-Python 3.13 grammar checks passed, but grammar compatibility is not runtime
-compatibility. These counts describe the recorded application run, not a new
-test run for this README update.
+The current candidate has **272 distinct Python tests** executed across the
+application, payload and mapped-identity runs, and **42 browser-logic checks**,
+using Python **3.13.5**. The original preview separately recorded four additional
+manifest checks and isolated demo smoke checks. Runtime compatibility is based
+on execution, not grammar alone.
 
-Four checks remain **BLOCKED**:
+The four original validation gaps now have these results:
 
-1. Python 3.13 runtime compatibility: interpreter unavailable in the checked runtime.
-2. Distinct publisher/collector permission testing: additional mapped identities
-   unavailable.
-3. Strict installer lifecycle harness: required UID mapping denied.
-4. Strict security-results harness: runtime boundary tool `/usr/bin/env` is a
-   symlink rejected by the unchanged harness.
+1. Python 3.13 runtime compatibility: **PASS** in the disposable Debian guest.
+2. Distinct publisher/collector permissions: **PASS** using real separate mapped
+   identities, with no capabilities in the reading/writing children.
+3. Strict installer lifecycle harness: **PASS**, 365 assertions and isolation audit.
+4. Strict security-results harness: **PASS**, 3,669 assertions and the final
+   isolation gate, using the unchanged harness and Debian's trusted tools.
 
 Use the [dated validation report](docs/source-preview-validation.md) for methods,
 limitations and results, and the [source-preview guide](docs/source-preview.md)
