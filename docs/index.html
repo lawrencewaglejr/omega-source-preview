@@ -30,6 +30,7 @@
     .stack article { border: 1px solid #3a3526; border-radius: 10px; padding: 18px 20px; background: #171813; }
     .stack h3 { margin: 0 0 8px; color: #ead18a; font-size: 18px; }
     .stack p { margin: 0; color: #d0ccbf; font-size: 15px; }
+    .stack p + p { margin-top: 12px; }
     @media (max-width: 600px) { .stack { grid-template-columns: 1fr; } }
     .note { border-left: 3px solid var(--gold); padding: 12px 18px; background: #1b1a14; color: #d4cfbf; }
     .note p { margin: 0; }
@@ -69,6 +70,37 @@
         <article><h3>OMEGA dashboard + operator tools</h3><p>Python and SQLite power persistent collection, device labels, new-device notifications, correlation, evidence exports and paired setup. Nine Bash-based commands cover status, triage, reports, diagnostics and retention review.</p></article>
       </div>
       <p>The intended image uses Docker/containerd for Pi-hole and EveBox, systemd for service management, and an experimental rpi-image-gen builder with pinned package, container and model inputs. These external dependencies require their own provisioning and configuration. <a href="https://github.com/lawrencewaglejr/omega-source-preview#software-stack">See the complete software stack and version boundaries.</a></p>
+    </section>
+    <section class="overview" id="security-and-dfir" aria-labelledby="dfir-title">
+      <p class="eyebrow">Defense and investigation examples</p>
+      <h2 id="dfir-title">Understand suspicious activity. Preserve the evidence.</h2>
+      <p><strong>DFIR means Digital Forensics and Incident Response.</strong> These examples describe a properly configured deployment, not attacks stopped by the fictional demo. Blocking depends on separately configured controls; OMEGA's dashboard and AI do not execute containment actions.</p>
+      <div class="stack">
+        <article><h3>Repeated SSH password guessing</h3><p>An externally configured Fail2ban jail can temporarily ban an address after repeated failed logins. Wazuh can report collected authentication events through its separate manager.</p><p><strong>Investigation value:</strong> Review recorded attempts, targeted accounts, timestamps and any subsequent successful login, where those events were collected and retained. <a href="https://github.com/fail2ban/fail2ban">Fail2ban documentation</a>.</p></article>
+        <article><h3>A device requests a blocked malicious domain</h3><p>Pi-hole can refuse DNS resolution when a domain matches configured blocking rules and the device uses that resolver. OMEGA can show collected DNS observations and device context.</p><p><strong>Investigation value:</strong> Identify which observed device requested the domain and when. A blocked lookup alone does not establish infection. <a href="https://docs.pi-hole.net/group_management/example/">Pi-hole examples</a>.</p></article>
+        <article><h3>Scanning or suspicious network traffic</h3><p>Suricata can alert when traffic visible to its sensor matches configured detection rules. EveBox offers another event-review interface. An operator can investigate and use separately managed containment controls.</p><p><strong>Investigation value:</strong> Examine available addresses, ports, signatures, protocol details and timing. OMEGA does not automatically block these connections. <a href="https://docs.suricata.io/en/latest/output/eve/eve-json-output.html">Suricata event output</a>.</p></article>
+        <article><h3>Unexpected changes to important files</h3><p>Configured Wazuh file-integrity monitoring can alert on changes to monitored files. The Pi agent covers its configured sources; other endpoints need their own agents or collection.</p><p><strong>Investigation value:</strong> Investigate the reported file change and available hashes, attributes and timestamps. The manager must supply the relevant events to OMEGA. <a href="https://documentation.wazuh.com/current/user-manual/capabilities/file-integrity/how-it-works.html">Wazuh file-integrity monitoring</a>.</p></article>
+        <article><h3>Exposed administration services</h3><p>Properly configured Tailscale access controls can restrict administration to authorized users and devices, reducing the need to expose services publicly.</p><p><strong>Investigation value:</strong> Reduce an access path while investigating through an authorized private connection. This does not establish that OMEGA collects Tailscale audit logs. <a href="https://tailscale.com/docs/features/access-control">Tailscale access controls</a>.</p></article>
+        <article><h3>Malicious text or unsafe paths aimed at OMEGA</h3><p>Synthetic adversarial tests exercise command injection, forged result markers, unsafe paths and hostile text handling to catch failures in how the software treats untrusted input.</p><p><strong>Investigation value:</strong> More reliable handling helps distinguish collected content from trusted application output. These are software checks, not evidence that a live attack was stopped. <a href="https://github.com/lawrencewaglejr/omega-source-preview/tree/main/tests">OMEGA test source</a>.</p></article>
+      </div>
+      <h3>A fictional investigation sequence</h3>
+      <ol>
+        <li><strong>10:01:</strong> A monitored laptop requests a suspicious domain.</li>
+        <li><strong>10:02:</strong> Suricata records a network alert involving its observed address.</li>
+        <li><strong>10:03:</strong> Wazuh reports a change to a monitored startup file.</li>
+      </ol>
+      <p>When those events are collected, an investigator can compare records, verify timestamps and device mappings, and decide what to preserve or investigate next. Shared timing or an address is a lead, not proof of compromise. A Suricata event relayed through Wazuh is not independent corroboration.</p>
+      <h3>Evidence for investigation and handoff</h3>
+      <p>Completed full-report exports on a configured live collector include a readable assessment, coverage/correlation JSON, retained normalized events and original collected sensor records from a consistent snapshot. Retention limits and unavailable sources remain visible. Local AI explains aggregates and selected examples; investigators must verify its conclusions.</p>
+      <p>Formal forensic work still needs acquisition tools, preserved originals, verified timestamps and a documented chain of custody. OMEGA does not provide disk/memory acquisition, complete packet capture or immutable evidence storage. Keep real incident evidence out of public issues. <a href="https://github.com/lawrencewaglejr/omega-source-preview/blob/main/docs/security-and-dfir.md">Read the full defense and DFIR guide.</a></p>
+      <h3 id="adversarial-testing">Adversarial and failure-mode testing</h3>
+      <p>Public test cases cover hostile input, command injection and forged result markers; authentication, origins, CSRF and session expiry; unsafe paths and permissions; interrupted operations, rollback, concurrency and evidence preservation. Image/payload tampering tests have a separate acceptance scope.</p>
+      <ul>
+        <li><strong>272 distinct Python tests</strong> and <strong>42 browser-logic checks</strong>.</li>
+        <li><strong>365 strict installer assertions</strong>, with the isolation audit passed.</li>
+        <li><strong>3,669 command-layer security-results assertions</strong>, with the isolation gate passed.</li>
+      </ul>
+      <p>These are recorded results, not a new run for this page. The totals use different units and are not counts of distinct attacks. Synthetic adversarial and regression checks are not an independent penetration test or proof of appliance security. <a href="https://github.com/lawrencewaglejr/omega-source-preview/tree/main/tests">Explore the tests</a> and <a href="https://github.com/lawrencewaglejr/omega-source-preview/blob/main/docs/source-preview-validation.md">read the dated validation report</a>.</p>
     </section>
     <aside class="note" aria-label="Demo scope"><p>This demonstration does not monitor a live network or run AI inference. OMEGA is experimental source software; appliance-image and hardware acceptance remain separate. <a href="https://github.com/lawrencewaglejr/omega-source-preview/blob/main/docs/source-preview-validation.md">Read the validation results.</a></p></aside>
     <footer>
