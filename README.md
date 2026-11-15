@@ -188,6 +188,38 @@ accounts. Parental enforcement, family profiles, schedules and supported
 messaging connections remain in development. Pi-hole's separately configured
 DNS blocking does not establish that OMEGA's family preferences are enforced.
 
+## Practical security and DFIR examples
+
+**DFIR means Digital Forensics and Incident Response.** In a properly configured
+deployment, OMEGA can help an operator investigate suspicious activity, use
+separately configured protections and retain evidence. These are illustrative
+use cases, not claims that the experimental demo stopped real attacks.
+
+| Example | How the configured stack could help | Investigation value |
+| --- | --- | --- |
+| **Repeated SSH password guessing** | An externally configured Fail2ban jail can temporarily ban an address after repeated failed logins. Wazuh can report collected authentication events through its separate manager. [Fail2ban documentation](https://github.com/fail2ban/fail2ban). | Review recorded attempts, targeted accounts, timestamps and any subsequent successful login, where those events were collected and retained. |
+| **A device requests a blocked malicious domain** | Pi-hole can refuse DNS resolution when a domain matches configured blocking rules and the device uses that resolver. OMEGA can show collected DNS observations and device context. [Pi-hole examples](https://docs.pi-hole.net/group_management/example/). | Identify which observed device requested the domain and when. A blocked lookup alone does not establish infection. |
+| **Scanning or suspicious network traffic** | Suricata can alert when traffic visible to its sensor matches configured detection rules. EveBox offers another event-review interface. An operator can investigate and use separately managed containment controls. [Suricata event output](https://docs.suricata.io/en/latest/output/eve/eve-json-output.html). | Examine available addresses, ports, signatures, protocol details and timing. OMEGA does not automatically block these connections. |
+| **Unexpected changes to important files** | Configured Wazuh file-integrity monitoring can alert on changes to monitored files. The Pi agent covers its configured sources; other endpoints need their own agents or collection. [Wazuh file-integrity monitoring](https://documentation.wazuh.com/current/user-manual/capabilities/file-integrity/how-it-works.html). | Investigate the reported file change and available hashes, attributes and timestamps. The manager must supply the relevant events to OMEGA. |
+| **Exposed administration services** | Properly configured Tailscale access controls can restrict administration to authorized users and devices, reducing the need to expose services publicly. [Tailscale access controls](https://tailscale.com/docs/features/access-control). | Reduce an access path while investigating through an authorized private connection. This does not establish that OMEGA collects Tailscale audit logs. |
+| **Malicious text or unsafe paths aimed at OMEGA** | Synthetic adversarial tests exercise command injection, forged result markers, unsafe paths and hostile text handling to catch failures in how the software treats untrusted input. [OMEGA test source](https://github.com/lawrencewaglejr/omega-source-preview/tree/main/tests). | More reliable handling helps distinguish collected content from trusted application output. These are software checks, not evidence that a live attack was stopped. |
+
+For example, a fictional investigation might compare a **10:01 DNS request**,
+a **10:02 Suricata alert**, and a **10:03 Wazuh monitored-file change** involving
+the same observed device. Investigators must verify timestamps, device mappings
+and source records; timing alone does not establish compromise. A relayed copy
+of an event is not independent corroboration.
+
+Completed full reports on a configured live collector provide a consistent
+retained-evidence snapshot: a readable assessment, coverage/correlation JSON,
+normalized events and original collected sensor records. Coverage and retention
+limits matter. Formal forensic work still needs appropriate acquisition tools,
+preserved originals and a documented chain of custody. AI explanations require
+verification against the evidence.
+
+See the [defense and DFIR guide](docs/security-and-dfir.md) for the investigation
+example, export contents, component prerequisites and forensic limitations.
+
 ## Command-line toolkit
 
 The managed installer provides nine operator commands:
@@ -292,6 +324,19 @@ for exact test commands. Tests use synthetic fixtures and disposable isolation;
 operational evidence is not a test fixture. A running service, successful demo
 or software test pass does not establish appliance acceptance or network safety.
 
+### Adversarial and failure-mode coverage
+
+The public tests exercise command injection, forged result markers, hostile text,
+authentication/origin/CSRF checks, session expiry, symlinks and path traversal,
+distinct-identity permissions, interrupted installation, rollback, concurrency
+and evidence preservation. Image-input/payload tests also exercise tampering
+rejection, with shipping-image acceptance tracked separately.
+
+The recorded test/check/assertion totals above use different units; they are not
+counts of distinct attacks. These are synthetic adversarial and regression
+checks, not an independent penetration test or a guarantee of network safety.
+See the [test source](tests/) and [DFIR/testing guide](docs/security-and-dfir.md).
+
 ## Privacy and operating boundaries
 
 - This distribution starts with fresh sanitized Git history. Private deployment
@@ -317,6 +362,7 @@ or software test pass does not establish appliance acceptance or network safety.
 | [config/](config/) and [examples/](examples/) | Configuration examples and fictional sample output |
 | [tests/](tests/) | Source, browser, installer, permission and image-payload checks |
 | [Source-preview guide](docs/source-preview.md) | Version scope, demo, dependencies and test commands |
+| [Defense and DFIR](docs/security-and-dfir.md) | Practical examples, evidence exports, adversarial tests and investigation limits |
 | [Validation report](docs/source-preview-validation.md) | Recorded passes, blocked checks and deferred acceptance |
 | [First setup](docs/dashboard-first-boot.md) | Device configuration, activation and evidence verification |
 | [Wazuh-manager setup](docs/wazuh-manager-setup.md) | Restricted reader permissions and SSH connection |
