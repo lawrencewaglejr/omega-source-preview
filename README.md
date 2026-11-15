@@ -4,9 +4,34 @@
 
 OMEGA is an experimental local network-security appliance project designed for
 the **Raspberry Pi 5 with 8 GB RAM**, targeting **Raspberry Pi OS Lite 64-bit on
-Debian 13**. It brings network detections, endpoint events, DNS observations,
-device context, retained evidence, reports and local AI explanations into one
-operator dashboard.
+Debian 13**. Its intended role is a dedicated local system for collecting
+available security observations, reviewing suspicious activity, understanding
+device behavior and preparing evidence for investigation through one browser
+dashboard.
+
+The intended stack combines **Suricata network intrusion detection (IDS)**,
+**Wazuh SIEM/XDR** through a Pi-hosted agent and separately provisioned manager,
+**Pi-hole** DNS observations and configured DNS blocking, and **EveBox** event
+review. OMEGA reads configured Wazuh manager alerts and JSON archives through
+restricted SSH/rsync access. **Tailscale** supports separately provisioned remote
+access; **Fail2ban** can provide externally configured host protection against
+repeated authentication failures. Fail2ban is not packaged, pinned or configured
+by this preview.
+
+OMEGA adds a **Python and SQLite** collection and reporting layer with persistent
+records, restart continuity, device labels, newly observed-device notifications,
+cross-source correlation candidates and source-availability indicators. A paired
+setup wizard guides configuration and explicit service activation, while a
+**nine-command operator toolkit** supports status checks, alert triage, reports,
+diagnostics, support bundles and retention review.
+
+For **Digital Forensics and Incident Response (DFIR)**, completed full reports on
+a configured live collector combine a readable assessment, coverage/correlation
+JSON, normalized events and original collected sensor records from a consistent
+retained-evidence snapshot. **Ollama and Qwen3** provide the intended local AI
+explanation layer for aggregates and selected evidence. Investigators must verify
+those explanations; the assistant does not execute commands or block traffic,
+and AI inference is disabled in the fictional demo.
 
 A **Raspberry Pi** is a small, general-purpose computer built on a single circuit
 board. The Pi 5 includes an Arm processor, memory, Ethernet, Wi-Fi and USB ports,
@@ -33,25 +58,6 @@ and [Raspberry Pi OS guide](https://www.raspberrypi.com/documentation/computers/
 
 **0.1.0-preview.1 · Experimental source preview** · [Apache 2.0](LICENSE)
 
-The intended appliance stack combines **Suricata as the network IDS** for
-network detections and EVE JSON records, **Pi-hole** DNS observations and separately configured DNS blocking,
-and **EveBox** for reviewing Suricata events. A **Wazuh agent on the Pi** connects
-to a **separately provisioned Wazuh manager**, part of the **Wazuh SIEM/XDR
-platform**, for endpoint monitoring. OMEGA reads
-configured manager alerts and JSON archives through a restricted SSH/rsync
-connection; a Wazuh agent alone does not supply those manager logs.
-
-**Tailscale** provides separately provisioned remote access, while **Fail2ban**
-can provide externally configured host protection against repeated authentication
-failures. Fail2ban is not packaged, pinned or configured by this source preview.
-**Ollama** and the **Qwen3** model provide the intended on-appliance AI runtime for
-explaining selected evidence; the assistant does not execute commands or block
-traffic, and inference is disabled in the fictional demo.
-
-OMEGA's **Python and SQLite** services provide the browser dashboard, persistent
-collection, device labels, new-device notifications, cross-source correlation,
-evidence exports and paired setup wizard. A **Bash-based nine-command operator
-toolkit** supports status, triage, reporting, diagnostics and retention review.
 The intended image uses **Docker/containerd** for Pi-hole and EveBox,
 **systemd** for service management, and an experimental **rpi-image-gen** builder
 with pinned package, container and model inputs. External sensors, managers,
