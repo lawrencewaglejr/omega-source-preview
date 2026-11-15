@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Watch OMEGA's 47-second experimental source-preview demo, using fictional security data.">
+  <meta name="description" content="Explore OMEGA, an experimental Raspberry Pi 5 security appliance project combining Suricata, a Wazuh agent and separate manager, Pi-hole, EveBox, Tailscale, external Fail2ban and local AI. Watch the fictional demo.">
   <meta name="color-scheme" content="dark">
   <title>Watch the OMEGA demo</title>
   <style>
@@ -23,6 +23,14 @@
     .meta span { padding: 4px 12px; border: 1px solid #49422c; border-radius: 30px; color: #e6d7a9; font-size: 13px; }
     video { display: block; width: 100%; aspect-ratio: 3 / 2; background: #000; border: 1px solid #4c432a; border-radius: 12px; }
     .links { display: flex; flex-wrap: wrap; gap: 12px 26px; margin: 14px 0 30px; }
+    .overview { margin: 34px 0; }
+    .overview h2 { margin: 0 0 12px; font-size: clamp(25px, 4vw, 34px); line-height: 1.25; }
+    .overview > p { color: var(--muted); }
+    .stack { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 22px 0; }
+    .stack article { border: 1px solid #3a3526; border-radius: 10px; padding: 18px 20px; background: #171813; }
+    .stack h3 { margin: 0 0 8px; color: #ead18a; font-size: 18px; }
+    .stack p { margin: 0; color: #d0ccbf; font-size: 15px; }
+    @media (max-width: 600px) { .stack { grid-template-columns: 1fr; } }
     .note { border-left: 3px solid var(--gold); padding: 12px 18px; background: #1b1a14; color: #d4cfbf; }
     .note p { margin: 0; }
     footer { border-top: 1px solid #333126; margin-top: 30px; padding-top: 20px; color: var(--muted); font-size: 14px; }
@@ -48,6 +56,20 @@
       <a href="media/omega-demo.mp4" download="omega-demo.mp4">Download the demo · MP4, under 1 MB</a>
       <a href="https://github.com/lawrencewaglejr/omega-source-preview/blob/main/docs/demo.md">Screenshots and local demo instructions</a>
     </div>
+    <section class="overview" id="appliance-overview" aria-labelledby="overview-title">
+      <p class="eyebrow">The intended appliance stack</p>
+      <h2 id="overview-title">Local security visibility, built around the Raspberry Pi.</h2>
+      <p>OMEGA targets a <strong>Raspberry Pi 5 with 8 GB RAM</strong>, running <strong>Raspberry Pi OS Lite 64-bit on Debian 13</strong>. The project brings network and endpoint observations, device context, retained evidence, reporting and local AI explanations into one operator dashboard.</p>
+      <div class="stack">
+        <article><h3>Suricata + EveBox</h3><p>Suricata supplies network detections and EVE JSON activity. EveBox provides an additional interface for reviewing Suricata events. Useful coverage depends on the configured sensors and network visibility.</p></article>
+        <article><h3>Wazuh agent + separate manager</h3><p>A Wazuh agent on the Pi connects to a separately provisioned Wazuh manager for endpoint monitoring. OMEGA reads configured manager alerts and JSON archives through restricted SSH/rsync access; the agent alone does not provide manager logs.</p></article>
+        <article><h3>Pi-hole</h3><p>DNS observations and separately configured DNS blocking, with network or DHCP observations that help build device context. OMEGA's optional family preferences do not themselves activate filtering.</p></article>
+        <article><h3>Tailscale + Fail2ban</h3><p>Tailscale supports separately provisioned remote access. Fail2ban can provide externally configured host protection against repeated authentication failures; it is not packaged, pinned or configured by this preview.</p></article>
+        <article><h3>Ollama + Qwen3</h3><p>The intended on-appliance AI runtime explains selected evidence and suggests checks for operator review. It does not execute commands or block traffic. AI inference is disabled in the fictional demo.</p></article>
+        <article><h3>OMEGA dashboard + operator tools</h3><p>Python and SQLite power persistent collection, device labels, new-device notifications, correlation, evidence exports and paired setup. Nine Bash-based commands cover status, triage, reports, diagnostics and retention review.</p></article>
+      </div>
+      <p>The intended image uses Docker/containerd for Pi-hole and EveBox, systemd for service management, and an experimental rpi-image-gen builder with pinned package, container and model inputs. These external dependencies require their own provisioning and configuration. <a href="https://github.com/lawrencewaglejr/omega-source-preview#software-stack">See the complete software stack and version boundaries.</a></p>
+    </section>
     <aside class="note" aria-label="Demo scope"><p>This demonstration does not monitor a live network or run AI inference. OMEGA is experimental source software; appliance-image and hardware acceptance remain separate. <a href="https://github.com/lawrencewaglejr/omega-source-preview/blob/main/docs/source-preview-validation.md">Read the validation results.</a></p></aside>
     <footer>
       <p><strong>Founder &amp; Security Architect: Lawrence Wagle Jr</strong></p>
