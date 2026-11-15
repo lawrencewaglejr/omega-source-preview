@@ -12,10 +12,11 @@ operator dashboard.
 
 **0.1.0-preview.1 · Experimental source preview** · [Apache 2.0](LICENSE)
 
-The intended appliance stack combines **Suricata** network detections and EVE
-JSON records, **Pi-hole** DNS observations and separately configured DNS blocking,
+The intended appliance stack combines **Suricata as the network IDS** for
+network detections and EVE JSON records, **Pi-hole** DNS observations and separately configured DNS blocking,
 and **EveBox** for reviewing Suricata events. A **Wazuh agent on the Pi** connects
-to a **separately provisioned Wazuh manager** for endpoint monitoring. OMEGA reads
+to a **separately provisioned Wazuh manager**, part of the **Wazuh SIEM/XDR
+platform**, for endpoint monitoring. OMEGA reads
 configured manager alerts and JSON archives through a restricted SSH/rsync
 connection; a Wazuh agent alone does not supply those manager logs.
 
@@ -58,8 +59,8 @@ validation environment; they are not claims about the latest upstream releases.
 
 | Software | Role in OMEGA | Version or source boundary |
 | --- | --- | --- |
-| **Suricata** | Network detections, DNS and other EVE JSON activity | Appliance package pin: 7.0.10 |
-| **Wazuh** | Endpoint events, alerts and archives; local or restricted remote-manager collection | Agent package pin: 4.14.7; manager provisioned separately |
+| **Suricata** | Network IDS: rule-based detections, DNS and other EVE JSON activity | Appliance package pin: 7.0.10 |
+| **Wazuh** | SIEM/XDR integration: endpoint events, manager alerts and archives; local or restricted remote-manager collection | Agent package pin: 4.14.7; manager provisioned separately |
 | **Pi-hole** | DNS observations, device observations and separately configured DNS blocking | Appliance container pin: 2026.07.2 |
 | **EveBox** | Additional Suricata event-viewing interface | Appliance container pin: 0.28.0 |
 | **Tailscale** | Separately provisioned remote access | Appliance package pin: 1.102.3 |
@@ -82,6 +83,30 @@ See the [image build contract](image/README.md),
 [exact package manifest](image/locks/packages.manifest), and
 [third-party notices](docs/third-party-notices.md) for dependency details.
 The OMEGA Apache license does not relicense these external projects.
+
+### SIEM and IDS roles
+
+- **Wazuh is the SIEM/XDR platform.** SIEM means **Security Information and
+  Event Management**: central collection and analysis of security events. XDR
+  means **Extended Detection and Response**. OMEGA's intended Pi image includes
+  the Wazuh agent package; the agent collects configured host events and connects
+  to a separately provisioned manager. The agent alone is not a complete SIEM,
+  and this preview does not bundle the full Wazuh central platform. OMEGA reads
+  available manager alerts/JSON archives through the configured collector.
+- **Suricata is the network IDS.** IDS means **Intrusion Detection System**:
+  inspecting traffic visible to the sensor and raising alerts for configured
+  detection rules. OMEGA uses its EVE JSON observations; EveBox is an additional
+  event-review interface.
+- **OMEGA brings the available evidence together.** Its dashboard, device
+  context, correlation, reports and local AI explanations help the operator
+  review Wazuh, Suricata and DNS observations.
+
+Suricata also supports **IPS (Intrusion Prevention System)** operation when
+separately configured for inline enforcement. This source preview does not
+claim inline blocking or automatic containment by the OMEGA dashboard.
+See [Wazuh SIEM](https://wazuh.com/platform/siem/),
+[Wazuh platform setup](https://documentation.wazuh.com/current/quickstart.html),
+and [Suricata IDS/IPS](https://suricata.io/2024/04/15/what-is-suricata/).
 
 ## Features
 
