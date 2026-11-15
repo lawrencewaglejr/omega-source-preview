@@ -28,9 +28,9 @@ and remaining gaps.
 
 ## See the preview
 
-![OMEGA security overview using fictional demo data](docs/media/overview.png)
+[![Watch the OMEGA fictional demo](docs/media/overview.png)](https://lawrencewaglejr.github.io/omega-source-preview/)
 
-[Watch the 47-second fictional demo](docs/media/omega-demo.mp4?raw=true) ·
+[▶ Watch the 47-second fictional demo](https://lawrencewaglejr.github.io/omega-source-preview/) ·
 [Browse screenshots and run it locally](docs/demo.md)
 
 The demo does not monitor a live network or run AI inference.
