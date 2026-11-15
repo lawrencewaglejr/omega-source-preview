@@ -3,7 +3,8 @@
 These screenshots and the short recording show the experimental source preview,
 using only the project's fictional demo data. No live network was inspected.
 
-[Watch or download the 47-second demo (MP4, under 1 MB)](media/omega-demo.mp4?raw=true).
+[▶ Watch the 47-second demo in your browser](https://lawrencewaglejr.github.io/omega-source-preview/).
+[Download the MP4 (under 1 MB)](https://lawrencewaglejr.github.io/omega-source-preview/media/omega-demo.mp4).
 The silent recording includes captions for the overview, device inventory,
 alerts, notifications, AI connection status and report interface.
 
