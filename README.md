@@ -8,6 +8,27 @@ Debian 13**. It brings network detections, endpoint events, DNS observations,
 device context, retained evidence, reports and local AI explanations into one
 operator dashboard.
 
+A **Raspberry Pi** is a small, general-purpose computer built on a single circuit
+board. The Pi 5 includes an Arm processor, memory, Ethernet, Wi-Fi and USB ports,
+so it can run Linux software and serve as a compact dedicated computer for a
+project such as OMEGA. The Pi supplies the hardware; OMEGA supplies the intended
+security software, data collection and browser interface.
+
+**8 GB RAM** means the working memory used by running programs. The operating
+system, collected records and reports need separate persistent storage, such as
+a microSD card. **Raspberry Pi OS Lite** is a Linux operating system without a
+full graphical desktop; **Debian 13** identifies the Linux distribution release
+it is based on, and **64-bit** identifies the software architecture targeted by
+the image. The browser dashboard provides OMEGA's graphical operator interface.
+
+In the intended appliance, the Pi runs the dashboard, collector and supported
+local services. An operator reviews available security observations through a
+browser using separately configured private access. The hardware still needs
+suitable power, cooling and storage, and coverage depends on configured sensors
+and data sources.
+See the official [Raspberry Pi 5 overview](https://www.raspberrypi.com/products/raspberry-pi-5/)
+and [Raspberry Pi OS guide](https://www.raspberrypi.com/documentation/computers/os.html).
+
 **Founder & Security Architect: Lawrence Wagle Jr**
 
 **0.1.0-preview.1 · Experimental source preview** · [Apache 2.0](LICENSE)
