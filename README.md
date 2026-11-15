@@ -2,9 +2,11 @@
 
 **Your network. Your control.**
 
-A local network-security appliance project that brings network detections,
-endpoint events, DNS observations, device context, and local AI explanations
-into one dashboard.
+OMEGA is an experimental local network-security appliance project designed for
+the **Raspberry Pi 5 with 8 GB RAM**, targeting **Raspberry Pi OS Lite 64-bit on
+Debian 13**. It brings network detections, endpoint events, DNS observations,
+device context, retained evidence, reports and local AI explanations into one
+operator dashboard.
 
 **Founder & Security Architect: Lawrence Wagle Jr**
 
@@ -12,13 +14,29 @@ into one dashboard.
 
 **License: [Apache 2.0](LICENSE) · Copyright 2026 Lawrence Wagle Jr**
 
-OMEGA combines Suricata, Wazuh, and Pi-hole evidence with EveBox event review,
-Tailscale remote access, and externally configured Fail2ban host protection to
-help an operator understand observed activity and decide what to investigate.
-Its dashboard, collector, reporting tools, setup wizard, command-line utilities,
-and experimental Raspberry Pi image builder are included here. External sensors,
-host-protection services, runtimes, models, and operating-system packages are
-separate dependencies.
+The intended appliance stack combines **Suricata** network detections and EVE
+JSON records, **Pi-hole** DNS observations and separately configured DNS blocking,
+and **EveBox** for reviewing Suricata events. A **Wazuh agent on the Pi** connects
+to a **separately provisioned Wazuh manager** for endpoint monitoring. OMEGA reads
+configured manager alerts and JSON archives through a restricted SSH/rsync
+connection; a Wazuh agent alone does not supply those manager logs.
+
+**Tailscale** provides separately provisioned remote access, while **Fail2ban**
+can provide externally configured host protection against repeated authentication
+failures. Fail2ban is not packaged, pinned or configured by this source preview.
+**Ollama** and the **Qwen3** model provide the intended on-appliance AI runtime for
+explaining selected evidence; the assistant does not execute commands or block
+traffic, and inference is disabled in the fictional demo.
+
+OMEGA's **Python and SQLite** services provide the browser dashboard, persistent
+collection, device labels, new-device notifications, cross-source correlation,
+evidence exports and paired setup wizard. A **Bash-based nine-command operator
+toolkit** supports status, triage, reporting, diagnostics and retention review.
+The intended image uses **Docker/containerd** for Pi-hole and EveBox,
+**systemd** for service management, and an experimental **rpi-image-gen** builder
+with pinned package, container and model inputs. External sensors, managers,
+host-protection services, runtimes, models and operating-system packages remain
+separate dependencies that require their own provisioning and configuration.
 
 This release provides source code and fictional demos. A finished,
 hardware-validated appliance image is not available. The
