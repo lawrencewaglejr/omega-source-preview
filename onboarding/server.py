@@ -243,12 +243,13 @@ def handler_for(app):
                 if not app.operation.acquire(blocking=False):
                     return self.reply(409, {"error": "Wait for the current setup operation."})
                 try:
-                    return self.reply(200, app.appliance.identity())
+                    response = (200, app.appliance.identity())
                 except Exception as exc:
-                    return self.reply(409, {"error": app.error_message(exc,
+                    response = (409, {"error": app.error_message(exc,
                         "Could not prepare a fresh manager identity. Check the local installation and existing setup state.")})
                 finally:
                     app.operation.release()
+                return self.reply(*response)
             return self.reply(*app.submit(owner, self.path.removeprefix("/api/"), body))
     return Handler
 

@@ -142,6 +142,10 @@ class TelemetryTests(unittest.TestCase):
         store.close()
         with self.eve.open('ab') as output: output.write(line(suricata(flow_id=3)))
         self.eve.rename(self.root/'eve.json.1')
+        # Reproduce coarse filesystem mtime without changing the event times.
+        # A saved cursor must retain unread bytes after the active inode rotates.
+        rounded = dt.datetime.fromisoformat(started).timestamp() - .001
+        os.utime(self.root/'eve.json.1', (rounded, rounded))
         self.eve.write_bytes(line(suricata(flow_id=4)))
         store=self.store(from_now=True)
         result=store.poll()

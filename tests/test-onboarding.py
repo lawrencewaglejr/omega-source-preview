@@ -190,6 +190,23 @@ class HTTPTests(unittest.TestCase):
         self.assertIn("Setup could not finish", result["error"])
         self.assertTrue(self.operation("/api/check", {"config": A.DEFAULTS})["result"]["ok"])
 
+    def test_identity_lock_is_released_before_response_write(self):
+        self.pair()
+        handler = self.server.RequestHandlerClass
+        reply = handler.reply
+        observed = []
+        def inspect_reply(instance, code, body, *args, **kwargs):
+            if instance.path == '/api/manager/identity':
+                observed.append((code, self.app.operation.locked()))
+            return reply(instance, code, body, *args, **kwargs)
+        with mock.patch.object(handler, 'reply', inspect_reply):
+            for failure, expected in ((None, 200), (OSError('synthetic identity failure'), 409)):
+                with self.subTest(status=expected), mock.patch.object(
+                        self.appliance, 'identity', side_effect=failure,
+                        return_value={'public_key': 'synthetic fixture public key'}):
+                    self.assertEqual(self.call('/api/manager/identity', {})[0], expected)
+        self.assertEqual(observed, [(200, False), (409, False)])
+
     def test_identity_errors_keep_known_recovery_guidance_and_hide_unknown_details(self):
         self.pair()
         mirror = A.load_helper("configure-wazuh-mirror")

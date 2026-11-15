@@ -45,11 +45,32 @@ class DashboardTests(unittest.TestCase):
                     result = types.SimpleNamespace(target=target, start=lambda: None, is_alive=lambda: False)
                     threads.append((name, result))
                     return result
-                with patch.object(dashboard.threading, 'Thread', side_effect=thread), patch.object(dashboard.shutil, 'disk_usage', return_value=types.SimpleNamespace(free=10*1024**3)):
+                with patch.object(dashboard.threading, 'Thread', side_effect=thread), patch.object(dashboard.shutil, 'disk_usage', return_value=types.SimpleNamespace(free=10*1024**3)), patch.object(dashboard.time, 'monotonic', return_value=30):
                     app.start_discovery()
                     next(worker for name, worker in threads if name == 'omega-telemetry').target()
                 self.assertEqual(calls, ['poll', 'snapshot'])
                 self.assertEqual(any(name == 'omega-correlation' for name, _ in threads), caught_up)
+
+    def test_completed_background_analysis_still_waits_five_minutes(self):
+        for now, expected in ((30, False), (311, True)):
+            with self.subTest(now=now):
+                app = dashboard.Application.__new__(dashboard.Application)
+                stopped, threads = [False], []
+                app.discovery_stop = types.SimpleNamespace(is_set=lambda: stopped[0], wait=lambda _: stopped.__setitem__(0, True))
+                app.discovery = types.SimpleNamespace(poll=lambda: None)
+                app.telemetry_snapshot = {}
+                app.analysis_updated, app.analysis_worker = 10, None
+                app.telemetry_store = types.SimpleNamespace(
+                    path=self.root/'telemetry.sqlite3',
+                    poll=lambda **_: {'caught_up': True}, snapshot=lambda: {'events': 1})
+                def thread(*, target, daemon, name):
+                    result = types.SimpleNamespace(target=target, start=lambda: None, is_alive=lambda: False)
+                    threads.append((name, result))
+                    return result
+                with patch.object(dashboard.threading, 'Thread', side_effect=thread), patch.object(dashboard.shutil, 'disk_usage', return_value=types.SimpleNamespace(free=10*1024**3)), patch.object(dashboard.time, 'monotonic', return_value=now):
+                    app.start_discovery()
+                    next(worker for name, worker in threads if name == 'omega-telemetry').target()
+                self.assertEqual(any(name == 'omega-correlation' for name, _ in threads), expected)
 
     def test_background_reader_closes_on_analysis_failure(self):
         app = dashboard.Application.__new__(dashboard.Application)

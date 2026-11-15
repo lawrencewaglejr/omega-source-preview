@@ -185,7 +185,7 @@ class Application:
                         if time.monotonic()-refreshed > 10:
                             self.telemetry_snapshot = self.telemetry_store.snapshot()
                             refreshed = time.monotonic()
-                        if progress.get("caught_up") and time.monotonic()-self.analysis_updated > 300 and (not self.analysis_worker or not self.analysis_worker.is_alive()):
+                        if progress.get("caught_up") and (not self.analysis_updated or time.monotonic()-self.analysis_updated > 300) and (not self.analysis_worker or not self.analysis_worker.is_alive()):
                             self.analysis_worker = threading.Thread(target=self.refresh_analysis,daemon=True,name="omega-correlation")
                             self.analysis_worker.start()
                     except Exception:

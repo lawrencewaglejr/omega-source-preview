@@ -11,7 +11,7 @@ See the [third-party source review](third-party-notices.md) and
 
 ## Run the fictional demo
 
-On a Linux development workstation with Python 3.14 (the verified runtime):
+On a Linux development workstation with Python 3.13 (3.13.5 was verified):
 
 ```bash
 python3 -B dashboard/server.py --demo
@@ -27,10 +27,10 @@ see the first-boot and manager guides only as unaccepted appliance/deployment wo
 
 Dashboard and owner-setup Python code use the standard library plus local modules;
 there are no third-party pip dependencies to install for the demo. Current software
-checks use Python 3.14.4 and Node.js 22.22.1. Python 3.13 is the appliance target,
-but its runtime compatibility check is BLOCKED because that interpreter is not
-available in the preparation environment. Python 3.13 grammar checks pass;
-syntax alone does not establish runtime compatibility.
+checks executed on Debian Python 3.13.5 and Node.js 20.19.2 in a disposable guest.
+The earlier Python 3.14.4 / Node.js 22.22.1 results describe the original preview
+checkpoint. Current Python 3.13 support is based on executed suites, not grammar
+checks alone; see the [validation report](source-preview-validation.md).
 Linux is required for service integration and POSIX permission behavior.
 
 The nine-command installer requires Bash, GNU core utilities and jq for Suricata
@@ -41,7 +41,9 @@ configured local AI. Manager ACL provisioning additionally needs ACL tools.
 Image construction has a separate pinned ARM64 Debian build dependency contract,
 including namespace mapping tools and ruamel.yaml; it is outside this preview.
 
-Tests need Python, Node.js, rsync, Bubblewrap and working isolated namespaces.
+Tests need Python, Node.js, rsync, zstd, Bubblewrap and working isolated namespaces.
+The distinct-UID case also needs ACL tools, setpriv and the documented disposable
+guest with a full identity map. It must not run against host or appliance paths.
 Use synthetic passwd/group/NSS files where key fixtures require user lookup;
 never mount host credentials or service sockets. Run source tests in a disposable
 workspace with a private network namespace. No real evidence is a test fixture.
@@ -66,13 +68,12 @@ node tests/test-dashboard-ui.js
 node tests/test-onboarding-ui.js
 ```
 
-Cross-identity DAC tests are BLOCKED without a supported disposable guest/UID map.
-The same-UID rsync test verifies modes and transfer behavior, not another user's
-access. Strict installer/security harness checks also remain BLOCKED where their
-namespace or trusted-tool prerequisites are unavailable. Do not weaken those
-checks, replace system tools, or label blocked checks as passing. An intermittent
-onboarding lock-release assertion has previously failed and then passed repeated
-baseline/candidate checks; retain and investigate failures rather than suppressing it.
+Cross-identity DAC and strict harness checks require the supported disposable
+environment described in the validation report. Outside it, an unavailable
+identity map or trusted-tool prerequisite is BLOCKED, not passed. Same-UID rsync
+metadata checks do not prove another user's access. Do not weaken assertions or
+replace host tools. The onboarding lock-release race was reproduced and fixed;
+the response is now written only after releasing the operation lock.
 
 ## Changes being previewed
 
@@ -84,7 +85,11 @@ baseline/candidate checks; retain and investigate failures rather than suppressi
   retaining original gzip and events. Durable version markers avoid repeat import;
   active, unread and partial caches remain. Failed cleanup can retry on restart.
 - Background correlation waits for catch-up and closes its database iterator on
-  every exit; explicit reports and shutdown take priority.
+  every exit; explicit reports and shutdown take priority. First analysis starts
+  after catch-up even on a freshly booted system; completed analyses retain the
+  five-minute interval.
+- A known rotated log retains unread cursor state when filesystem mtime rounds
+  before collection start; unknown historical rotations retain their exclusion.
 - Device readers use the last completed snapshot while a writer is busy.
 - Permission failures are described as access errors rather than proof of corrupt
   gzip data. Source/expansion failures retain retry state and source evidence.
@@ -100,12 +105,12 @@ previous image payload and intentionally reject changed application bytes pendin
 separate content-inventory review. Do not repin protected content merely to pass a
 check. Source test results are not image acceptance. The root changelog, protected
 installer baseline and image locks have not been rewritten. The expanded project
-README credits Security Architect Lawrence Wagle Jr and describes the source
+README credits Founder & Security Architect Lawrence Wagle Jr and describes the source
 preview. It differs from the builder's previously authorized README blob; a
 separate reviewed README authorization is required for image source-trust
 preflight. Existing README verification rules and pins have not been relaxed.
 
-Before eventual publication: verify third-party notices and attribution, review
+Before each publication: verify third-party notices and attribution, review
 every proposed source path and Git object for private information, recheck
 dependencies and test results against final bytes, and obtain separate
 authorization for Git operations and publication. Private history, deployment

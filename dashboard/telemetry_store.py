@@ -379,7 +379,14 @@ class TelemetryStore:
                     unsafe += 1
                     continue
                 if self.collection_started and candidate != path and info.st_mtime < dt.datetime.fromisoformat(self.collection_started).timestamp():
-                    continue
+                    # A known active log can rotate within the filesystem's
+                    # timestamp granularity. Its saved cursor still owns unread
+                    # bytes even if the rounded mtime precedes collection start.
+                    known_cursor = not name.endswith('.gz') and self.db.execute(
+                        'SELECT 1 FROM cursors WHERE stream=? AND identity=?',
+                        (stream, f'{info.st_dev}:{info.st_ino}')).fetchone()
+                    if not known_cursor:
+                        continue
                 if self.collection_started and name.endswith('.gz') and self.db.execute("SELECT 1 FROM metadata WHERE name=?",(f'ignore:{stream}:{info.st_dev}:{info.st_ino}:{info.st_size}:{info.st_mtime_ns}',)).fetchone():
                     continue
                 if not include_consumed and name.endswith('.gz') and self.db.execute("SELECT 1 FROM metadata WHERE name=?", (self._archive_marker(stream, info),)).fetchone():
