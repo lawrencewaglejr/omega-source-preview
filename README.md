@@ -10,9 +10,7 @@ operator dashboard.
 
 **Founder & Security Architect: Lawrence Wagle Jr**
 
-**Version: 0.1.0-preview.1 · Experimental source preview**
-
-**License: [Apache 2.0](LICENSE) · Copyright 2026 Lawrence Wagle Jr**
+**0.1.0-preview.1 · Experimental source preview** · [Apache 2.0](LICENSE)
 
 The intended appliance stack combines **Suricata** network detections and EVE
 JSON records, **Pi-hole** DNS observations and separately configured DNS blocking,
@@ -340,9 +338,7 @@ No hardware orders or preorders are being accepted.
 GitHub Sponsors enrollment is being prepared. Sponsorship is not yet available;
 no payment or sponsorship benefits are promised by this repository.
 
-## Architecture and attribution
-
-**Founder & Security Architect: Lawrence Wagle Jr**
+## License and attribution
 
 OMEGA's project source code and documentation are licensed under the
 **Apache License, Version 2.0**, unless otherwise noted.
